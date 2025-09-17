@@ -3,3 +3,4 @@ yt-dlp
 torch
 openai-whisper
 google-generativeai
+gunicorn
