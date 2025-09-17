@@ -45,12 +45,12 @@ def summarize_youtube_video(youtube_link, save_directory):
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = whisper.load_model("medium", device=device)
-    result = model.transcribe(audio_path, task="translate", language="hi")
+    result = model.transcribe(audio_path, task="translate")
     transcript = result["text"]
     print("Transcript:\n", transcript)
 
     # Configure Gemini
-    genai.configure(api_key="AIzaSyAfGnJTYNVXIpIz25wb7ppd79pvexI0QJY")
+    genai.configure(api_key=api_key=os.environ["GEMINI_API_KEY"])
     model_gemini = genai.GenerativeModel("gemini-1.5-flash")
 
     def explain_in_chunks(transcript, chunk_size=3000):
