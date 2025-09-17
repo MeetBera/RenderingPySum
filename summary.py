@@ -50,7 +50,7 @@ def summarize_youtube_video(youtube_link, save_directory):
     print("Transcript:\n", transcript)
 
     # Configure Gemini
-    genai.configure(api_key=api_key=os.environ["GEMINI_API_KEY"])
+    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model_gemini = genai.GenerativeModel("gemini-1.5-flash")
 
     def explain_in_chunks(transcript, chunk_size=3000):
