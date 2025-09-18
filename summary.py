@@ -16,34 +16,39 @@ def summarize_youtube_video(youtube_link, save_directory):
             return parse_qs(parsed_url.query).get("v", [None])[0]
         return None
 
-    def download_audio_as_id(yt_url, save_dir):
-        video_id = get_video_id(yt_url)
-        if not video_id:
-            raise ValueError("Invalid YouTube URL or missing video ID")
+def download_audio_as_id(yt_url, save_dir):
+    video_id = get_video_id(yt_url)
+    if not video_id:
+        raise ValueError("Invalid YouTube URL or missing video ID")
 
-        # Create full save path
-        output_file = os.path.join(save_dir, f"{video_id}.mp3")
+    # Create full save path
+    output_file = os.path.join(save_dir, f"{video_id}.mp3")
 
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': os.path.join(save_dir, '%(id)s.%(ext)s'),
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-        }
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": os.path.join(save_dir, "%(id)s.%(ext)s"),
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+        "retries": 10,               # retry if blocked/rate-limited
+        "fragment_retries": 10,
+        "ignoreerrors": True,
+        "noplaylist": True,
+    }
 
-        # ✅ Add cookies file if available
-        cookies_file = "youtube.com_cookies.txt"
-        if os.path.exists(cookies_file):
-            ydl_opts["cookiefile"] = cookies_file
+    # ✅ Use cookies if available
+    cookies_file = os.path.join(os.getcwd(), "cookies.txt")  # <-- change here
+    if os.path.exists(cookies_file):
+        ydl_opts["cookiefile"] = cookies_file
+        print("Using cookies.txt for YouTube authentication")
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([yt_url])
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([yt_url])
 
-        print(f"Audio saved at: {output_file}")
-        return output_file
+    print(f"Audio saved at: {output_file}")
+    return output_file
 
     # --- Original script logic ---
     audio_path = download_audio_as_id(youtube_link, save_directory)
