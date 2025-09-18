@@ -6,22 +6,19 @@ import whisper
 import google.generativeai as genai
 import textwrap
 
-def summarize_youtube_video(youtube_link, save_directory):
-    # --- Original functions ---
-    def get_video_id(yt_url):
-        parsed_url = urlparse(yt_url)
-        if parsed_url.hostname in ["youtu.be"]:
-            return parsed_url.path[1:]
-        elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
-            return parse_qs(parsed_url.query).get("v", [None])[0]
-        return None
+def get_video_id(yt_url):
+    parsed_url = urlparse(yt_url)
+    if parsed_url.hostname in ["youtu.be"]:
+        return parsed_url.path[1:]
+    elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
+        return parse_qs(parsed_url.query).get("v", [None])[0]
+    return None
 
 def download_audio_as_id(yt_url, save_dir):
     video_id = get_video_id(yt_url)
     if not video_id:
         raise ValueError("Invalid YouTube URL or missing video ID")
 
-    # Create full save path
     output_file = os.path.join(save_dir, f"{video_id}.mp3")
 
     ydl_opts = {
@@ -32,35 +29,39 @@ def download_audio_as_id(yt_url, save_dir):
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }],
-        "retries": 10,               # retry if blocked/rate-limited
+        "retries": 10,
         "fragment_retries": 10,
-        "ignoreerrors": True,
+        "ignoreerrors": False,  # stop if error
         "noplaylist": True,
     }
 
-    # ✅ Use cookies if available
-    cookies_file = os.path.join(os.getcwd(), "cookies.txt")  # <-- change here
+    cookies_file = os.path.join(os.getcwd(), "cookies.txt")
     if os.path.exists(cookies_file):
         ydl_opts["cookiefile"] = cookies_file
-        print("Using cookies.txt for YouTube authentication")
+        print("✅ Using cookies.txt for YouTube authentication")
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([yt_url])
 
-    print(f"Audio saved at: {output_file}")
+    if not os.path.exists(output_file):
+        raise RuntimeError("❌ Audio download failed")
+
+    print(f"✅ Audio saved at: {output_file}")
     return output_file
 
-    # --- Original script logic ---
+def summarize_youtube_video(youtube_link, save_directory):
     audio_path = download_audio_as_id(youtube_link, save_directory)
-    print("Dynamic audio path:", audio_path)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = whisper.load_model("medium", device=device)
     result = model.transcribe(audio_path, task="translate")
     transcript = result["text"]
+
+    if not transcript.strip():
+        raise RuntimeError("❌ Whisper returned empty transcript")
+
     print("Transcript:\n", transcript)
 
-    # Configure Gemini
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model_gemini = genai.GenerativeModel("gemini-1.5-flash")
 
@@ -69,7 +70,8 @@ def download_audio_as_id(yt_url, save_dir):
         explanations = []
         for i, chunk in enumerate(chunks, start=1):
             prompt = f"""
-            explain this {chunk} in very simple language + give summary in easy points
+            Explain this in very simple language + give summary in bullet points:
+            {chunk}
             """
             print(f"Processing chunk {i}/{len(chunks)}...")
             response = model_gemini.generate_content(prompt)
@@ -77,11 +79,7 @@ def download_audio_as_id(yt_url, save_dir):
         return "\n\n".join(explanations)
 
     final_explanation = explain_in_chunks(transcript)
-    print(final_explanation)
-    return final_explanation
+    if not final_explanation.strip():
+        raise RuntimeError("❌ Gemini returned empty summary")
 
-# Example usage
-if __name__ == "__main__":
-    youtube_link = "https://youtu.be/0guSWBSO8lo"
-    save_directory = r"C:\Users\Lenovo\OneDrive\Desktop\PROGRAMMING\python\Summary"
-    summarize_youtube_video(youtube_link, save_directory)
+    return final_explanation
