@@ -33,6 +33,12 @@ def summarize_youtube_video(youtube_link, save_directory):
                 'preferredquality': '192',
             }],
         }
+
+        # ✅ Add cookies file if available
+        cookies_file = "youtube.com_cookies.txt"
+        if os.path.exists(cookies_file):
+            ydl_opts["cookiefile"] = cookies_file
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([yt_url])
 
