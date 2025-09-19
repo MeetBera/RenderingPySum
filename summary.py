@@ -6,6 +6,7 @@ import whisper
 import google.generativeai as genai
 import textwrap
 
+
 def get_video_id(yt_url):
     parsed_url = urlparse(yt_url)
     if parsed_url.hostname in ["youtu.be"]:
@@ -13,6 +14,25 @@ def get_video_id(yt_url):
     elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
         return parse_qs(parsed_url.query).get("v", [None])[0]
     return None
+
+
+def get_cookie_file():
+    """
+    Try to locate cookies file in Render (secrets) or locally.
+    """
+    # 1. Render secret mount
+    render_path = "/etc/secrets/cookies.txt"
+    if os.path.exists(render_path):
+        return render_path
+
+    # 2. Local fallback names
+    for name in ["cookies.txt", "youtube.com_cookies.txt"]:
+        local_path = os.path.join(os.getcwd(), name)
+        if os.path.exists(local_path):
+            return local_path
+
+    return None
+
 
 def download_audio_as_id(yt_url, save_dir):
     video_id = get_video_id(yt_url)
@@ -35,10 +55,13 @@ def download_audio_as_id(yt_url, save_dir):
         "noplaylist": True,
     }
 
-    cookies_file = os.path.join(os.getcwd(), "cookies.txt")
-    if os.path.exists(cookies_file):
+    # ✅ Use cookies if found
+    cookies_file = get_cookie_file()
+    if cookies_file:
         ydl_opts["cookiefile"] = cookies_file
-        print("✅ Using cookies.txt for YouTube authentication")
+        print(f"✅ Using cookies for YouTube authentication: {cookies_file}")
+    else:
+        print("⚠️ No cookies file found, might fail on restricted videos")
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([yt_url])
@@ -48,6 +71,7 @@ def download_audio_as_id(yt_url, save_dir):
 
     print(f"✅ Audio saved at: {output_file}")
     return output_file
+
 
 def summarize_youtube_video(youtube_link, save_directory):
     audio_path = download_audio_as_id(youtube_link, save_directory)
