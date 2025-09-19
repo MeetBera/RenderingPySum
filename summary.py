@@ -5,6 +5,7 @@ import torch
 import whisper
 import google.generativeai as genai
 import textwrap
+import shutil
 
 
 def get_video_id(yt_url):
@@ -18,14 +19,17 @@ def get_video_id(yt_url):
 
 def get_cookie_file():
     """
-    Try to locate cookies file in Render (secrets) or locally.
+    Returns a safe, writable path to the cookies file.
+    On Render, copy from /etc/secrets/ to /tmp/ because secrets are read-only.
     """
-    # 1. Render secret mount
     render_path = "/etc/secrets/cookies.txt"
     if os.path.exists(render_path):
-        return render_path
+        tmp_copy = "/tmp/cookies.txt"
+        if not os.path.exists(tmp_copy):  # copy only once
+            shutil.copy(render_path, tmp_copy)
+        return tmp_copy
 
-    # 2. Local fallback names
+    # Local fallback
     for name in ["cookies.txt", "youtube.com_cookies.txt"]:
         local_path = os.path.join(os.getcwd(), name)
         if os.path.exists(local_path):
@@ -55,7 +59,7 @@ def download_audio_as_id(yt_url, save_dir):
         "noplaylist": True,
     }
 
-    # ✅ Use cookies if found
+    # ✅ Safe cookies usage
     cookies_file = get_cookie_file()
     if cookies_file:
         ydl_opts["cookiefile"] = cookies_file
@@ -86,6 +90,7 @@ def summarize_youtube_video(youtube_link, save_directory):
 
     print("Transcript:\n", transcript)
 
+    # ✅ Use ENV var for API key (don’t hardcode!)
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model_gemini = genai.GenerativeModel("gemini-1.5-flash")
 
