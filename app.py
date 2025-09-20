@@ -25,8 +25,9 @@ import os
 import tempfile
 from flask import Flask, request, jsonify
 
-# Import the core logic from your summary.py file
-from summary import get_video_id, download_audio_as_id, explain_in_chunks
+# Import the core logic functions from summary.py
+# We only need to import the top-level functions
+from summary import get_video_id, download_audio_as_id, get_summary
 
 app = Flask(__name__)
 
@@ -44,25 +45,13 @@ def summarize_video():
             # Download the audio file to the temporary directory
             audio_path = download_audio_as_id(youtube_link, temp_dir)
 
-            # NOTE: Your summary.py script is hardcoded to use specific paths
-            # and will not work as-is in this setup.
-            # You will need to modify the script to make the transcription
-            # logic a function that takes the audio_path as an argument.
-            
-            # For demonstration, we'll assume you've modified summary.py
-            # to make the transcription and summarization logic a function.
-            # Here, we will simulate the process.
-            # In a real app, you would import and call those functions.
-            
-            # This is a placeholder for your actual transcription/summary logic
-            # You would replace this with your actual code from summary.py
-            print(f"Processing audio at {audio_path}")
-            
-            # Get API key from environment variable for security
-            os.environ.get('GEMINI_API_KEY')
-            
-            # Placeholder for the actual summary
-            summary_result = "This is a placeholder summary. Please modify summary.py to be callable from this app."
+            # Get the API key from environment variable for security
+            gemini_api_key = os.environ.get('GEMINI_API_KEY')
+            if not gemini_api_key:
+                return jsonify({"error": "GEMINI_API_KEY environment variable not set."}), 500
+
+            # Perform the transcription and summarization
+            summary_result = get_summary(audio_path, gemini_api_key)
             
             return jsonify({"summary": summary_result})
 
