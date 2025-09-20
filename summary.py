@@ -117,13 +117,17 @@
 import os
 import yt_dlp
 from urllib.parse import urlparse, parse_qs
+import torch 
+import whisper
+import google.generativeai as genai
+import textwrap
 
 # Function to extract video ID
 def get_video_id(yt_url):
     parsed_url = urlparse(yt_url)
     if parsed_url.hostname in ["youtu.be"]:
         return parsed_url.path[1:]
-    elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
+    elif parsed_url.hostname in ["[www.youtube.com](https://www.youtube.com)", "youtube.com"]:
         return parse_qs(parsed_url.query).get("v", [None])[0]
     return None
 
@@ -134,62 +138,55 @@ def download_audio_as_id(yt_url, save_dir):
         raise ValueError("Invalid YouTube URL or missing video ID")
 
     # Create full save path
-    output_file = os.path.join(save_dir, f"{video_id}.mp3")
+    output_path = os.path.join(save_dir, f"{video_id}.mp3")
 
     ydl_opts = {
-    'format': 'bestaudio/best',
-    'outtmpl': 'C:/Users/Lenovo/OneDrive/Desktop/PROGRAMMING/python/Summary/%(id)s.%(ext)s',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-}
+        'format': 'bestaudio/best',
+        'outtmpl': output_path, # Use the dynamic path here
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        # Suppress progress output for clean logs in the server
+        'quiet': True,
+        'no_warnings': True,
+    }
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([yt_url])
 
-    print(f"Audio saved at: {output_file}")
-    return output_file
+    print(f"Audio saved at: {output_path}")
+    return output_path
 
-# Example usage
-youtube_link = "https://youtu.be/0guSWBSO8lo"
-save_directory = r"C:\Users\Lenovo\OneDrive\Desktop\PROGRAMMING\python\Summary"
+# Function to perform the transcription and summarization
+def get_summary(audio_path):
+    # Configure Gemini with a secure API key from environment variables
+    genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-audio_path = download_audio_as_id(youtube_link, save_directory)
-print("Dynamic audio path:", audio_path)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = whisper.load_model("medium", device=device)
+    result = model.transcribe(audio_path, task="translate", language="hi")
+    transcript = result["text"]
 
-import torch 
-import whisper
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = whisper.load_model("medium", device=device)
-result = model.transcribe(audio_path, task="translate", language="hi")
-transcript = result["text"]
-
-print("Transcript:\n", transcript)
-
-import google.generativeai as genai
-import textwrap
-# Configure Gemini
-genai.configure(api_key="AIzaSyAfGnJTYNVXIpIz25wb7ppd79pvexI0QJY")
-
-# Use flash model (fast and cost-efficient)
-model = genai.GenerativeModel("gemini-1.5-flash")
-
-def explain_in_chunks(transcript, chunk_size=3000):
-    chunks = textwrap.wrap(transcript, chunk_size)
-    explanations = []
+    print("Transcript:\n", transcript[:500] + "...") # Print first 500 characters
     
-    for i, chunk in enumerate(chunks, start=1):
-        prompt = f"""
-        explain this {chunk} in very simple language + give summary in easy points
-        """
-        print(f"Processing chunk {i}/{len(chunks)}...")
-        response = model.generate_content(prompt)
-        explanations.append(response.text)
-    
-    return "\n\n".join(explanations)
+    # Use flash model (fast and cost-efficient)
+    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
-# Example usage
-final_explanation = explain_in_chunks(transcript)
-print(final_explanation)
+    def explain_in_chunks(transcript, chunk_size=3000):
+        chunks = textwrap.wrap(transcript, chunk_size)
+        explanations = []
+        
+        for i, chunk in enumerate(chunks, start=1):
+            prompt = f"""
+            explain this {chunk} in very simple language + give summary in easy points
+            """
+            print(f"Processing chunk {i}/{len(chunks)}...")
+            response = gemini_model.generate_content(prompt)
+            explanations.append(response.text)
+        
+        return "\n\n".join(explanations)
+
+    final_explanation = explain_in_chunks(transcript)
+    return final_explanation
