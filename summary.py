@@ -113,7 +113,6 @@
 
 #     return final_explanation
 
-
 import os
 import yt_dlp
 from urllib.parse import urlparse, parse_qs
@@ -127,7 +126,7 @@ def get_video_id(yt_url):
     parsed_url = urlparse(yt_url)
     if parsed_url.hostname in ["youtu.be"]:
         return parsed_url.path[1:]
-    elif parsed_url.hostname in ["[www.youtube.com](https://www.youtube.com)", "youtube.com"]:
+    elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
         return parse_qs(parsed_url.query).get("v", [None])[0]
     return None
 
@@ -159,34 +158,34 @@ def download_audio_as_id(yt_url, save_dir):
     print(f"Audio saved at: {output_path}")
     return output_path
 
-# Function to perform the transcription and summarization
-def get_summary(audio_path):
-    # Configure Gemini with a secure API key from environment variables
-    genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+# Helper function for chunk-based explanation. This is now a top-level function.
+def explain_in_chunks(transcript, gemini_api_key, chunk_size=3000):
+    genai.configure(api_key=gemini_api_key)
+    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    
+    chunks = textwrap.wrap(transcript, chunk_size)
+    explanations = []
+    
+    for i, chunk in enumerate(chunks, start=1):
+        prompt = f"""
+        explain this {chunk} in very simple language + give summary in easy points
+        """
+        print(f"Processing chunk {i}/{len(chunks)}...")
+        response = gemini_model.generate_content(prompt)
+        explanations.append(response.text)
+    
+    return "\n\n".join(explanations)
 
+# Function to perform the transcription and summarization
+# This function now accepts the gemini_api_key as a parameter
+def get_summary(audio_path, gemini_api_key):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = whisper.load_model("medium", device=device)
     result = model.transcribe(audio_path, task="translate", language="hi")
     transcript = result["text"]
 
-    print("Transcript:\n", transcript[:500] + "...") # Print first 500 characters
+    print("Transcript:\n", transcript[:500] + "...")
     
-    # Use flash model (fast and cost-efficient)
-    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-
-    def explain_in_chunks(transcript, chunk_size=3000):
-        chunks = textwrap.wrap(transcript, chunk_size)
-        explanations = []
-        
-        for i, chunk in enumerate(chunks, start=1):
-            prompt = f"""
-            explain this {chunk} in very simple language + give summary in easy points
-            """
-            print(f"Processing chunk {i}/{len(chunks)}...")
-            response = gemini_model.generate_content(prompt)
-            explanations.append(response.text)
-        
-        return "\n\n".join(explanations)
-
-    final_explanation = explain_in_chunks(transcript)
+    # Call the new top-level explain_in_chunks function and pass the API key
+    final_explanation = explain_in_chunks(transcript, gemini_api_key)
     return final_explanation
