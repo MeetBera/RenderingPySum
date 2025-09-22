@@ -35,7 +35,7 @@ app = Flask(__name__)
 @app.route('/summarize', methods=['POST'])
 def summarize_video():
     # Get the YouTube URL from the request data
-    youtube_link = request.json.get('youtube_url')
+    youtube_link = request.json.get('youtube_link') or request.json.get('youtube_url')
     if not youtube_link:
         return jsonify({"error": "No YouTube URL provided"}), 400
 
