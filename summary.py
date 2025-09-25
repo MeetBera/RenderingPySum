@@ -116,56 +116,69 @@
 import os
 import yt_dlp
 from urllib.parse import urlparse, parse_qs
-import torch 
+import torch
 import whisper
 import google.generativeai as genai
 import textwrap
 
+# ----------------------------
 # Function to extract video ID
+# ----------------------------
 def get_video_id(yt_url):
     parsed_url = urlparse(yt_url)
     if parsed_url.hostname in ["youtu.be"]:
-        return parsed_url.path[1:]
+        return parsed_url.path[1:]  # remove leading '/'
     elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
         return parse_qs(parsed_url.query).get("v", [None])[0]
     return None
 
-# Function to download audio and set dynamic path
+# ---------------------------------------
+# Function to download audio from YouTube
+# ---------------------------------------
 def download_audio_as_id(yt_url, save_dir):
     video_id = get_video_id(yt_url)
     if not video_id:
         raise ValueError("Invalid YouTube URL or missing video ID")
 
-    # Create full save path
     output_path = os.path.join(save_dir, f"{video_id}.mp3")
 
+    # Render secure cookies path
+    cookies_path = "/etc/secrets/cookies.txt"
+    if not os.path.exists(cookies_path):
+        raise FileNotFoundError(
+            "YouTube cookies file not found! "
+            "Upload it as a Render secret file."
+        )
+
     ydl_opts = {
-    'format': 'bestaudio/best',
-    'outtmpl': output_path,
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-    'quiet': True,
-    'no_warnings': True,
-    'cookiefile': r'C:\path\to\cookies.txt',  # <-- Add this line
-}
-    
+        'format': 'bestaudio/best',
+        'outtmpl': output_path,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True,
+        'no_warnings': True,
+        'cookiefile': cookies_path,  # ✅ Use secure file on Render
+    }
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([yt_url])
 
     print(f"Audio saved at: {output_path}")
     return output_path
 
-# Helper function for chunk-based explanation. This is now a top-level function.
+# -------------------------------------------------
+# Helper function for chunk-based explanation
+# -------------------------------------------------
 def explain_in_chunks(transcript, gemini_api_key, chunk_size=3000):
     genai.configure(api_key=gemini_api_key)
     gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-    
+
     chunks = textwrap.wrap(transcript, chunk_size)
     explanations = []
-    
+
     for i, chunk in enumerate(chunks, start=1):
         prompt = f"""
         explain this {chunk} in very simple language + give summary in easy points
@@ -173,11 +186,12 @@ def explain_in_chunks(transcript, gemini_api_key, chunk_size=3000):
         print(f"Processing chunk {i}/{len(chunks)}...")
         response = gemini_model.generate_content(prompt)
         explanations.append(response.text)
-    
+
     return "\n\n".join(explanations)
 
-# Function to perform the transcription and summarization
-# This function now accepts the gemini_api_key as a parameter
+# -----------------------------------------
+# Function to transcribe and summarize audio
+# -----------------------------------------
 def get_summary(audio_path, gemini_api_key):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = whisper.load_model("medium", device=device)
@@ -185,7 +199,6 @@ def get_summary(audio_path, gemini_api_key):
     transcript = result["text"]
 
     print("Transcript:\n", transcript[:500] + "...")
-    
-    # Call the new top-level explain_in_chunks function and pass the API key
+
     final_explanation = explain_in_chunks(transcript, gemini_api_key)
     return final_explanation
