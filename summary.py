@@ -140,17 +140,17 @@ def download_audio_as_id(yt_url, save_dir):
     output_path = os.path.join(save_dir, f"{video_id}.mp3")
 
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': output_path, # Use the dynamic path here
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        # Suppress progress output for clean logs in the server
-        'quiet': True,
-        'no_warnings': True,
-    }
+    'format': 'bestaudio/best',
+    'outtmpl': output_path,
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',
+    }],
+    'quiet': True,
+    'no_warnings': True,
+    'cookiefile': r'C:\path\to\cookies.txt',  # <-- Add this line
+}
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([yt_url])
