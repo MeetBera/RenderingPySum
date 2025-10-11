@@ -161,6 +161,7 @@ def download_audio_as_id(yt_url, save_dir):
         'quiet': True,
         'no_warnings': True,
         'cookiefile': cookies_path,  # ✅ Use secure file on Render
+        'cachedir': False,  # ✅ Disable writing cache
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
