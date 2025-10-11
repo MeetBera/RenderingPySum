@@ -1,8 +1,7 @@
 Flask
 gunicorn
 google-generativeai
-openai-whisper
-torch
-torchaudio
+youtube-transcript-api
 tqdm
-yt-dlp
+torch
+
