@@ -144,6 +144,7 @@ def download_audio_as_id(yt_url, save_dir):
 
     # Render secure cookies path
     cookies_path = "/etc/secrets/cookies.txt"
+    print("Cookie file exists?", os.path.exists(cookies_path))
     if not os.path.exists(cookies_path):
         raise FileNotFoundError(
             "YouTube cookies file not found! "
