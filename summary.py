@@ -143,7 +143,7 @@ def download_audio_as_id(yt_url, save_dir):
     output_path = os.path.join(save_dir, f"{video_id}.mp3")
 
     # Render secure cookies path
-    cookies_path = "/etc/secrets/cookies.txt"
+    cookies_path = os.path.join(os.getcwd(), "youtube.com_cookies.txt")
     print("Cookie file exists?", os.path.exists(cookies_path))
     if not os.path.exists(cookies_path):
         raise FileNotFoundError(
