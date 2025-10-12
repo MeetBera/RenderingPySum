@@ -22,11 +22,8 @@
 #     except Exception as e:
 #         return jsonify({"error": str(e)}), 500
 import os
-import tempfile
 from flask import Flask, request, jsonify
-
-# Import the core logic functions from summary.py
-from summary import download_audio_as_id, get_summary
+from summary import get_summary  # ✅ only import what exists
 
 app = Flask(__name__)
 
@@ -43,10 +40,8 @@ def summarize_video():
         if not gemini_api_key:
             return jsonify({"error": "GEMINI_API_KEY environment variable not set"}), 500
 
-        # ✅ Use a temp dir for audio download
-        with tempfile.TemporaryDirectory() as temp_dir:
-            audio_path = download_audio_as_id(youtube_link, temp_dir)
-            summary_result = get_summary(audio_path, gemini_api_key)
+        # ✅ Directly summarize via transcript (no audio)
+        summary_result = get_summary(youtube_link, gemini_api_key)
 
         # ✅ Always wrap in clean JSON
         return jsonify({
@@ -57,6 +52,7 @@ def summarize_video():
         # ✅ Catch-all to guarantee valid JSON response
         return jsonify({"error": str(e)}), 500
 
-# Entry point for local testing
+
+# ✅ Entry point for local testing
 if __name__ == '__main__':
     app.run(debug=True)
