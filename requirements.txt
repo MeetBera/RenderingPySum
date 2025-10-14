@@ -2,3 +2,6 @@ Flask
 gunicorn
 google-generativeai
 youtube-transcript-api
+pytube
+vosk
+ffmpeg-python
