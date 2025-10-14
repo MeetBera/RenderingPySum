@@ -311,7 +311,7 @@ def explain_in_chunks(transcript, gemini_api_key, chunk_size=3000):
 # -----------------------------------------
 # Main: Get summary from YouTube
 # -----------------------------------------
-def get_summary_from_youtube(yt_url, gemini_api_key):
+def get_summary(yt_url, gemini_api_key):
     video_id = get_video_id(yt_url)
     if not video_id:
         raise ValueError("Invalid YouTube URL or missing video ID")
