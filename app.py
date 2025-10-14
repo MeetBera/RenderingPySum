@@ -58,51 +58,85 @@
 #     app.run(debug=True)
 
 
-import google.generativeai as genai
-import textwrap
+# import google.generativeai as genai
+# import textwrap
 
-# -------------------------------------------------
-# Function to extract transcript and summarize
-# -------------------------------------------------
-def get_summary(youtube_url, gemini_api_key):
-    """
-    Summarize a YouTube video's transcript using Gemini.
-    """
+# # -------------------------------------------------
+# # Function to extract transcript and summarize
+# # -------------------------------------------------
+# def get_summary(youtube_url, gemini_api_key):
+#     """
+#     Summarize a YouTube video's transcript using Gemini.
+#     """
 
-    # ✅ Configure Gemini API
-    genai.configure(api_key=gemini_api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+#     # ✅ Configure Gemini API
+#     genai.configure(api_key=gemini_api_key)
+#     model = genai.GenerativeModel("gemini-1.5-flash")
 
-    # ✅ Extract transcript text directly from YouTube
+#     # ✅ Extract transcript text directly from YouTube
+#     try:
+#         from youtube_transcript_api import YouTubeTranscriptApi
+#         import re
+
+#         # Extract video ID from URL
+#         match = re.search(r"(?:v=|youtu\.be/)([\w-]+)", youtube_url)
+#         if not match:
+#             raise ValueError("Invalid YouTube URL.")
+#         video_id = match.group(1)
+
+#         # Fetch transcript
+#         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "hi"])
+#         transcript_text = " ".join([item["text"] for item in transcript_list])
+
+#     except Exception as e:
+#         raise RuntimeError(f"Transcript extraction failed: {e}")
+
+#     # ✅ Break long transcript into chunks
+#     chunks = textwrap.wrap(transcript_text, 4000)
+#     summaries = []
+
+#     for i, chunk in enumerate(chunks, 1):
+#         print(f"Summarizing chunk {i}/{len(chunks)}...")
+#         prompt = f"Summarize this transcript segment in simple, human-friendly points:\n\n{chunk}"
+#         try:
+#             response = model.generate_content(prompt)
+#             summaries.append(response.text)
+#         except Exception as e:
+#             summaries.append(f"[Error on chunk {i}: {e}]")
+
+#     final_summary = "\n\n".join(summaries)
+#     return final_summary
+
+import os
+from flask import Flask, request, jsonify
+from summary import get_summary  # Import your core summarization logic
+
+app = Flask(__name__)
+
+@app.route("/summarize", methods=["POST"])
+def summarize_video():
     try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-        import re
+        # ✅ Get YouTube URL from request
+        youtube_link = request.json.get("youtube_url") or request.json.get("youtube_link")
+        if not youtube_link:
+            return jsonify({"error": "YouTube URL is required"}), 400
 
-        # Extract video ID from URL
-        match = re.search(r"(?:v=|youtu\.be/)([\w-]+)", youtube_url)
-        if not match:
-            raise ValueError("Invalid YouTube URL.")
-        video_id = match.group(1)
+        # ✅ Get Gemini API key
+        gemini_api_key = os.environ.get("GEMINI_API_KEY")
+        if not gemini_api_key:
+            return jsonify({"error": "GEMINI_API_KEY is not set in environment"}), 500
 
-        # Fetch transcript
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "hi"])
-        transcript_text = " ".join([item["text"] for item in transcript_list])
+        # ✅ Generate summary
+        summary_text = get_summary(youtube_link, gemini_api_key)
+
+        return jsonify({
+            "summary": summary_text.strip() if summary_text else "",
+        })
 
     except Exception as e:
-        raise RuntimeError(f"Transcript extraction failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
-    # ✅ Break long transcript into chunks
-    chunks = textwrap.wrap(transcript_text, 4000)
-    summaries = []
 
-    for i, chunk in enumerate(chunks, 1):
-        print(f"Summarizing chunk {i}/{len(chunks)}...")
-        prompt = f"Summarize this transcript segment in simple, human-friendly points:\n\n{chunk}"
-        try:
-            response = model.generate_content(prompt)
-            summaries.append(response.text)
-        except Exception as e:
-            summaries.append(f"[Error on chunk {i}: {e}]")
-
-    final_summary = "\n\n".join(summaries)
-    return final_summary
+# For local testing
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
