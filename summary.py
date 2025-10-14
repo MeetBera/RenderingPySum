@@ -289,7 +289,7 @@ def get_transcript_vosk(yt_url):
 # -------------------------------------------------
 # Chunk-based explanation using Gemini
 # -------------------------------------------------
-def explain_in_chunks(transcript, gemini_api_key, chunk_size=3000):
+def explain_in_chunks(transcript, gemini_api_key, chunk_size=1000):
     genai.configure(api_key=gemini_api_key)
     gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
