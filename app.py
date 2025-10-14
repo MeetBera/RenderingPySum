@@ -127,12 +127,13 @@ def summarize_video():
             return jsonify({"error": "GEMINI_API_KEY is not set in environment"}), 500
 
         # ✅ Generate summary
-        summary_text = get_summary(youtube_link, gemini_api_key)
-
+       # ✅ Generate summary (returns dict)
+        result = get_summary(youtube_link, gemini_api_key)
+        
         return jsonify({
-            "summary": summary_text.strip() if summary_text else "",
+            "summary": result.get("summary", "").strip(),
+            "transcript": result.get("transcript", "").strip()
         })
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
