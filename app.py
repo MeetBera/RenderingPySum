@@ -107,37 +107,42 @@
 #     final_summary = "\n\n".join(summaries)
 #     return final_summary
 
-import os
 from flask import Flask, request, jsonify
-from summary import get_summary  # Import your core summarization logic
+import os
+from google.api_core import exceptions as google_exceptions
+from summary import get_summary
 
 app = Flask(__name__)
 
 @app.route("/summarize", methods=["POST"])
-def summarize_video():
+def summarize():
     try:
-        # ✅ Get YouTube URL from request
-        youtube_link = request.json.get("youtube_url") or request.json.get("youtube_link")
-        if not youtube_link:
-            return jsonify({"error": "YouTube URL is required"}), 400
+        data = request.get_json(force=True)
 
-        # ✅ Get Gemini API key
-        gemini_api_key = os.environ.get("GEMINI_API_KEY")
+        # ✅ Flexible key: support both youtube_link and youtube_url
+        yt_url = data.get("youtube_link") or data.get("youtube_url")
+        if not yt_url:
+            return jsonify({"error": "Missing YouTube URL in request"}), 400
+
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
         if not gemini_api_key:
-            return jsonify({"error": "GEMINI_API_KEY is not set in environment"}), 500
+            return jsonify({"error": "Missing GEMINI_API_KEY environment variable"}), 500
 
-        # ✅ Generate summary
-       # ✅ Generate summary (returns dict)
-        result = get_summary(youtube_link, gemini_api_key)
-        
+        # 🧠 Core logic
+        result = get_summary(yt_url, gemini_api_key)
+
         return jsonify({
             "summary": result.get("summary", "").strip(),
             "transcript": result.get("transcript", "").strip()
         })
+
+    # 🌐 Specific Gemini quota/rate-limit handling
+    except google_exceptions.ResourceExhausted:
+        return jsonify({
+            "error": "Gemini API rate limit reached. Please try again in a minute."
+        }), 429
+
+    # 🧩 Handle any other unexpected errors
     except Exception as e:
+        print(f"❌ Flask summarize() error: {e}")
         return jsonify({"error": str(e)}), 500
-
-
-# For local testing
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
