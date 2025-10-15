@@ -298,12 +298,25 @@ def explain_in_chunks(transcript, gemini_api_key, chunk_size=1000):
 
     for i, chunk in enumerate(chunks, start=1):
         print(f"🧠 Processing chunk {i}/{len(chunks)}...")
+
         prompt = f"""
         Explain the following text in simple, human-like bullet points:
         {chunk}
         """
-        response = gemini_model.generate_content(prompt)
-        explanations.append(response.text)
+
+        for attempt in range(5):
+            try:
+                response = gemini_model.generate_content(prompt)
+                explanations.append(response.text)
+                break
+            except google_exceptions.ResourceExhausted:
+                wait = (attempt + 1) * 5
+                print(f"⏳ Rate limit hit — waiting {wait}s before retry...")
+                time.sleep(wait)
+            except Exception as e:
+                print(f"⚠️ Gemini error on chunk {i}: {e}")
+                time.sleep(2)
+                break
 
     return "\n\n".join(explanations)
 
