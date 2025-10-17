@@ -168,7 +168,7 @@ def summarize():
         if not openai_api_key:
             return jsonify({"error": "Missing OPENAI_API_KEY environment variable"}), 500
 
-        # Core logic
+        # Core logic: call summary function
         result = get_summary(yt_url, openai_api_key)
 
         return jsonify({
@@ -177,7 +177,7 @@ def summarize():
         })
 
     # Handle OpenAI rate limit
-    except openai.error.RateLimitError:
+    except openai.error.RateLimitError as e:
         return jsonify({
             "error": "OpenAI API rate limit reached. Please try again in a minute."
         }), 429
