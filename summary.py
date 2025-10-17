@@ -352,7 +352,6 @@ import textwrap
 import subprocess
 import wave
 import json
-import time
 from urllib.parse import urlparse, parse_qs
 
 import openai
@@ -395,12 +394,16 @@ def get_transcript_vosk(yt_url):
     audio_stream.download(filename=audio_path)
 
     wav_path = "audio.wav"
-    subprocess.run(["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
     model_dir = "vosk-model-small-en-us-0.15"
     if not os.path.exists(model_dir):
-        raise RuntimeError("Vosk model not found. Download it from: https://alphacephei.com/vosk/models")
+        raise RuntimeError(
+            "Vosk model not found. Download it from: https://alphacephei.com/vosk/models"
+        )
 
     wf = wave.open(wav_path, "rb")
     rec = KaldiRecognizer(Model(model_dir), wf.getframerate())
@@ -432,27 +435,22 @@ def explain_in_chunks(transcript, openai_api_key, chunk_size=1500):
         print(f"🧠 Processing chunk {i}/{len(chunks)}...")
         prompt = f"Summarize the following text in simple, human-like bullet points:\n\n{chunk}"
 
-        for attempt in range(5):
-            try:
-                response = openai.ChatCompletion.create(
-                    model="gpt-oss-20b",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful summarizer."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.5,
-                    max_tokens=1000
-                )
-                explanations.append(response.choices[0].message.content.strip())
-                break
-            except openai.error.RateLimitError:
-                wait = (attempt + 1) * 5
-                print(f"⏳ Rate limit hit — waiting {wait}s before retry...")
-                time.sleep(wait)
-            except Exception as e:
-                print(f"⚠️ OpenAI error on chunk {i}: {e}")
-                time.sleep(2)
-                break
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-oss-20b",
+                messages=[
+                    {"role": "system", "content": "You are a helpful summarizer."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,
+                max_tokens=1000
+            )
+            explanations.append(response.choices[0].message.content.strip())
+
+        except Exception as e:
+            print(f"⚠️ OpenAI error on chunk {i}: {e}")
+            # Stop processing immediately on any error
+            raise e
 
     return "\n\n".join(explanations)
 
