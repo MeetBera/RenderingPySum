@@ -107,10 +107,50 @@
 #     final_summary = "\n\n".join(summaries)
 #     return final_summary
 
+# from flask import Flask, request, jsonify
+# import os
+# from google.api_core import exceptions as google_exceptions
+# from summary import get_summary
+
+# app = Flask(__name__)
+
+# @app.route("/summarize", methods=["POST"])
+# def summarize():
+#     try:
+#         data = request.get_json(force=True)
+
+#         # ✅ Flexible key: support both youtube_link and youtube_url
+#         yt_url = data.get("youtube_link") or data.get("youtube_url")
+#         if not yt_url:
+#             return jsonify({"error": "Missing YouTube URL in request"}), 400
+
+#         gemini_api_key = os.getenv("GEMINI_API_KEY")
+#         if not gemini_api_key:
+#             return jsonify({"error": "Missing GEMINI_API_KEY environment variable"}), 500
+
+#         # 🧠 Core logic
+#         result = get_summary(yt_url, gemini_api_key)
+
+#         return jsonify({
+#             "summary": result.get("summary", "").strip(),
+#             "transcript": result.get("transcript", "").strip()
+#         })
+
+#     # 🌐 Specific Gemini quota/rate-limit handling
+#     except google_exceptions.ResourceExhausted:
+#         return jsonify({
+#             "error": "Gemini API rate limit reached. Please try again in a minute."
+#         }), 429
+
+#     # 🧩 Handle any other unexpected errors
+#     except Exception as e:
+#         print(f"❌ Flask summarize() error: {e}")
+#         return jsonify({"error": str(e)}), 500
+
 from flask import Flask, request, jsonify
 import os
-from google.api_core import exceptions as google_exceptions
 from summary import get_summary
+import openai
 
 app = Flask(__name__)
 
@@ -119,30 +159,33 @@ def summarize():
     try:
         data = request.get_json(force=True)
 
-        # ✅ Flexible key: support both youtube_link and youtube_url
+        # Flexible key: support both youtube_link and youtube_url
         yt_url = data.get("youtube_link") or data.get("youtube_url")
         if not yt_url:
             return jsonify({"error": "Missing YouTube URL in request"}), 400
 
-        gemini_api_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_api_key:
-            return jsonify({"error": "Missing GEMINI_API_KEY environment variable"}), 500
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            return jsonify({"error": "Missing OPENAI_API_KEY environment variable"}), 500
 
-        # 🧠 Core logic
-        result = get_summary(yt_url, gemini_api_key)
+        # Core logic
+        result = get_summary(yt_url, openai_api_key)
 
         return jsonify({
             "summary": result.get("summary", "").strip(),
             "transcript": result.get("transcript", "").strip()
         })
 
-    # 🌐 Specific Gemini quota/rate-limit handling
-    except google_exceptions.ResourceExhausted:
+    # Handle OpenAI rate limit
+    except openai.error.RateLimitError:
         return jsonify({
-            "error": "Gemini API rate limit reached. Please try again in a minute."
+            "error": "OpenAI API rate limit reached. Please try again in a minute."
         }), 429
 
-    # 🧩 Handle any other unexpected errors
+    # Handle any other unexpected errors
     except Exception as e:
         print(f"❌ Flask summarize() error: {e}")
         return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True)
