@@ -205,18 +205,160 @@
 #     final_explanation = explain_in_chunks(transcript, gemini_api_key)
 #     return final_explanation
 
+# import os
+# import textwrap
+# import subprocess
+# import wave
+# import json
+# from urllib.parse import urlparse, parse_qs
+
+# import google.generativeai as genai
+# from youtube_transcript_api import YouTubeTranscriptApi
+# from pytube import YouTube
+# from vosk import Model, KaldiRecognizer
+
+
+# # ----------------------------
+# # Extract video ID from YouTube URL
+# # ----------------------------
+# def get_video_id(yt_url):
+#     parsed_url = urlparse(yt_url)
+#     if parsed_url.hostname in ["youtu.be"]:
+#         return parsed_url.path[1:]
+#     elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
+#         return parse_qs(parsed_url.query).get("v", [None])[0]
+#     return None
+
+
+# # ----------------------------
+# # Try to get transcript via YouTube captions
+# # ----------------------------
+# def get_transcript_youtube(video_id):
+#     try:
+#         transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=["hi", "en"])
+#         transcript = " ".join([t["text"] for t in transcript_list])
+#         print("✅ Transcript fetched from YouTube captions.")
+#         return transcript
+#     except Exception as e:
+#         print(f"⚠️ YouTube captions not available: {e}")
+#         return None
+
+
+# # ----------------------------
+# # Fallback: Get transcript using Vosk (offline)
+# # ----------------------------
+# def get_transcript_vosk(yt_url):
+#     print("🎧 Falling back to Vosk (offline speech recognition)...")
+
+#     # Step 1: Download audio
+#     yt = YouTube(yt_url)
+#     audio_stream = yt.streams.filter(only_audio=True).first()
+#     audio_path = "audio.mp4"
+#     audio_stream.download(filename=audio_path)
+
+#     # Step 2: Convert to WAV (mono, 16kHz)
+#     wav_path = "audio.wav"
+#     subprocess.run(["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
+#                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+#     # Step 3: Load Vosk model
+#     model_dir = "vosk-model-small-en-us-0.15"
+#     if not os.path.exists(model_dir):
+#         raise RuntimeError("Vosk model not found. Download it from: "
+#                            "https://alphacephei.com/vosk/models")
+
+#     wf = wave.open(wav_path, "rb")
+#     rec = KaldiRecognizer(Model(model_dir), wf.getframerate())
+
+#     result_text = ""
+#     while True:
+#         data = wf.readframes(4000)
+#         if len(data) == 0:
+#             break
+#         if rec.AcceptWaveform(data):
+#             result_text += json.loads(rec.Result()).get("text", "") + " "
+
+#     wf.close()
+#     os.remove(audio_path)
+#     os.remove(wav_path)
+
+#     print("✅ Transcript extracted using Vosk.")
+#     return result_text
+
+
+# # -------------------------------------------------
+# # Chunk-based explanation using Gemini
+# # -------------------------------------------------
+# def explain_in_chunks(transcript, gemini_api_key, chunk_size=1000):
+#     genai.configure(api_key=gemini_api_key)
+#     gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+
+#     chunks = textwrap.wrap(transcript, chunk_size)
+#     explanations = []
+
+#     for i, chunk in enumerate(chunks, start=1):
+#         print(f"🧠 Processing chunk {i}/{len(chunks)}...")
+
+#         prompt = f"""
+#         Explain the following text in simple, human-like bullet points:
+#         {chunk}
+#         """
+
+#         for attempt in range(5):
+#             try:
+#                 response = gemini_model.generate_content(prompt)
+#                 explanations.append(response.text)
+#                 break
+#             except google_exceptions.ResourceExhausted:
+#                 wait = (attempt + 1) * 5
+#                 print(f"⏳ Rate limit hit — waiting {wait}s before retry...")
+#                 time.sleep(wait)
+#             except Exception as e:
+#                 print(f"⚠️ Gemini error on chunk {i}: {e}")
+#                 time.sleep(2)
+#                 break
+
+#     return "\n\n".join(explanations)
+
+
+# # -----------------------------------------
+# # Main: Get summary from YouTube
+# # -----------------------------------------
+# def get_summary(yt_url, gemini_api_key):
+#     video_id = get_video_id(yt_url)
+#     if not video_id:
+#         raise ValueError("Invalid YouTube URL or missing video ID")
+
+#     # Try YouTube transcript first
+#     transcript = get_transcript_youtube(video_id)
+
+#     # If unavailable, fallback to Vosk
+#     if not transcript or len(transcript.strip()) < 10:
+#         transcript = get_transcript_vosk(yt_url)
+
+#     if not transcript:
+#         raise RuntimeError("Failed to get transcript via both YouTube and Vosk.")
+
+#     print("📝 Transcript preview:\n", transcript[:500] + "...")
+#     summary = explain_in_chunks(transcript, gemini_api_key)
+
+#     return {
+#         "transcript": transcript,
+#         "summary": summary
+#     }
+
 import os
 import textwrap
 import subprocess
 import wave
 import json
+import time
 from urllib.parse import urlparse, parse_qs
 
-import google.generativeai as genai
+import openai
 from youtube_transcript_api import YouTubeTranscriptApi
 from pytube import YouTube
 from vosk import Model, KaldiRecognizer
-
 
 # ----------------------------
 # Extract video ID from YouTube URL
@@ -228,7 +370,6 @@ def get_video_id(yt_url):
     elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
         return parse_qs(parsed_url.query).get("v", [None])[0]
     return None
-
 
 # ----------------------------
 # Try to get transcript via YouTube captions
@@ -243,29 +384,23 @@ def get_transcript_youtube(video_id):
         print(f"⚠️ YouTube captions not available: {e}")
         return None
 
-
 # ----------------------------
 # Fallback: Get transcript using Vosk (offline)
 # ----------------------------
 def get_transcript_vosk(yt_url):
     print("🎧 Falling back to Vosk (offline speech recognition)...")
-
-    # Step 1: Download audio
     yt = YouTube(yt_url)
     audio_stream = yt.streams.filter(only_audio=True).first()
     audio_path = "audio.mp4"
     audio_stream.download(filename=audio_path)
 
-    # Step 2: Convert to WAV (mono, 16kHz)
     wav_path = "audio.wav"
     subprocess.run(["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # Step 3: Load Vosk model
     model_dir = "vosk-model-small-en-us-0.15"
     if not os.path.exists(model_dir):
-        raise RuntimeError("Vosk model not found. Download it from: "
-                           "https://alphacephei.com/vosk/models")
+        raise RuntimeError("Vosk model not found. Download it from: https://alphacephei.com/vosk/models")
 
     wf = wave.open(wav_path, "rb")
     rec = KaldiRecognizer(Model(model_dir), wf.getframerate())
@@ -285,64 +420,56 @@ def get_transcript_vosk(yt_url):
     print("✅ Transcript extracted using Vosk.")
     return result_text
 
-
 # -------------------------------------------------
-# Chunk-based explanation using Gemini
+# Chunk-based explanation using OpenAI gpt-oss-20b
 # -------------------------------------------------
-def explain_in_chunks(transcript, gemini_api_key, chunk_size=1000):
-    genai.configure(api_key=gemini_api_key)
-    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-
+def explain_in_chunks(transcript, openai_api_key, chunk_size=1500):
+    openai.api_key = openai_api_key
     chunks = textwrap.wrap(transcript, chunk_size)
     explanations = []
 
     for i, chunk in enumerate(chunks, start=1):
         print(f"🧠 Processing chunk {i}/{len(chunks)}...")
-
-        prompt = f"""
-        Explain the following text in simple, human-like bullet points:
-        {chunk}
-        """
+        prompt = f"Summarize the following text in simple, human-like bullet points:\n\n{chunk}"
 
         for attempt in range(5):
             try:
-                response = gemini_model.generate_content(prompt)
-                explanations.append(response.text)
+                response = openai.ChatCompletion.create(
+                    model="gpt-oss-20b",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful summarizer."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.5,
+                    max_tokens=1000
+                )
+                explanations.append(response.choices[0].message.content.strip())
                 break
-            except google_exceptions.ResourceExhausted:
+            except openai.error.RateLimitError:
                 wait = (attempt + 1) * 5
                 print(f"⏳ Rate limit hit — waiting {wait}s before retry...")
                 time.sleep(wait)
             except Exception as e:
-                print(f"⚠️ Gemini error on chunk {i}: {e}")
+                print(f"⚠️ OpenAI error on chunk {i}: {e}")
                 time.sleep(2)
                 break
 
     return "\n\n".join(explanations)
 
-
 # -----------------------------------------
 # Main: Get summary from YouTube
 # -----------------------------------------
-def get_summary(yt_url, gemini_api_key):
+def get_summary(yt_url, openai_api_key):
     video_id = get_video_id(yt_url)
     if not video_id:
         raise ValueError("Invalid YouTube URL or missing video ID")
 
-    # Try YouTube transcript first
     transcript = get_transcript_youtube(video_id)
-
-    # If unavailable, fallback to Vosk
     if not transcript or len(transcript.strip()) < 10:
         transcript = get_transcript_vosk(yt_url)
-
     if not transcript:
         raise RuntimeError("Failed to get transcript via both YouTube and Vosk.")
 
     print("📝 Transcript preview:\n", transcript[:500] + "...")
-    summary = explain_in_chunks(transcript, gemini_api_key)
-
-    return {
-        "transcript": transcript,
-        "summary": summary
-    }
+    summary = explain_in_chunks(transcript, openai_api_key)
+    return {"transcript": transcript, "summary": summary}
