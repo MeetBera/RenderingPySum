@@ -1,6 +1,6 @@
 Flask
 gunicorn
-google-generativeai
+openai
 youtube-transcript-api
 pytube
 vosk
