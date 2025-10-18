@@ -148,44 +148,55 @@
 #         return jsonify({"error": str(e)}), 500
 
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
-from summary import get_summary
 import openai
+from summary import get_summary
 
 app = Flask(__name__)
+CORS(app)  # ✅ allow frontend (React/Next.js) access from another origin
+
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"status": "✅ Flask summarizer API running on Render"}), 200
+
 
 @app.route("/summarize", methods=["POST"])
 def summarize():
     try:
+        # ---- Parse incoming JSON safely ----
         data = request.get_json(force=True)
-
-        # Flexible key: support both youtube_link and youtube_url
         yt_url = data.get("youtube_link") or data.get("youtube_url")
         if not yt_url:
             return jsonify({"error": "Missing YouTube URL in request"}), 400
 
+        # ---- Load API key from Render env vars ----
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if not openai_api_key:
+            print("❌ Missing OPENAI_API_KEY in Render environment!")
             return jsonify({"error": "Missing OPENAI_API_KEY environment variable"}), 500
 
-        # Core logic: call summary function
+        # ---- Core summarization ----
         result = get_summary(yt_url, openai_api_key)
 
         return jsonify({
             "summary": result.get("summary", "").strip(),
             "transcript": result.get("transcript", "").strip()
-        })
+        }), 200
 
-    # Handle OpenAI rate limit
-    except openai.error.RateLimitError as e:
+    # ---- Handle OpenAI rate limit explicitly ----
+    except openai.error.RateLimitError:
         return jsonify({
-            "error": "OpenAI API rate limit reached. Please try again in a minute."
+            "error": "OpenAI API rate limit reached. Try again later."
         }), 429
 
-    # Handle any other unexpected errors
+    # ---- Catch-all error (log for Render) ----
     except Exception as e:
         print(f"❌ Flask summarize() error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+# ---- Render deployment safe ----
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Render dynamically assigns port
+    app.run(host="0.0.0.0", port=port, debug=False)
