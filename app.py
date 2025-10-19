@@ -150,62 +150,40 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-import openai
 from summary import get_summary
 
 app = Flask(__name__)
-CORS(app)  # ✅ allow frontend (React/Next.js) access from another origin
+CORS(app)  # Allow cross-origin access (for React/Next.js frontend)
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "✅ Flask summarizer API running on Render"}), 200
+    return jsonify({"status": "✅ Flask summarizer API running"}), 200
 
 
 @app.route("/summarize", methods=["POST"])
 def summarize():
     try:
-        # ---- Parse incoming JSON safely ----
         data = request.get_json(force=True)
         yt_url = data.get("youtube_link") or data.get("youtube_url")
         if not yt_url:
-            return jsonify({"error": "Missing YouTube URL in request"}), 400
+            return jsonify({"error": "Missing YouTube URL"}), 400
 
-        # ---- Load API key from Render env vars ----
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            print("❌ Missing OPENAI_API_KEY in Render environment!")
-            return jsonify({"error": "Missing OPENAI_API_KEY environment variable"}), 500
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return jsonify({"error": "Server missing OpenAI API key"}), 500
 
-        # ---- Core summarization ----
-        result = get_summary(yt_url, openai_api_key)
+        result = get_summary(yt_url, api_key)
 
         return jsonify({
             "summary": result.get("summary", "").strip(),
             "transcript": result.get("transcript", "").strip()
         }), 200
 
-    # ---- Handle OpenAI rate limit or service errors ----
-    except openai.RateLimitError as e:
-        print(f"⚠️ OpenAI Rate Limit: {e}")
-        return jsonify({"error": "OpenAI API rate limit reached. Try again later."}), 429
-
-    except openai.APIConnectionError as e:
-        print(f"🌐 Connection error: {e}")
-        return jsonify({"error": "Connection error with OpenAI API."}), 503
-
-    except openai.APIStatusError as e:
-        print(f"⚠️ OpenAI returned error {e.status_code}: {e.response}")
-        return jsonify({"error": f"OpenAI service error ({e.status_code})."}), e.status_code
-
-    # ---- Catch-all (Render or internal) ----
     except Exception as e:
-        err_type = type(e).__name__
-        print(f"❌ [{err_type}] Flask summarize() error: {e}")
-        return jsonify({"error": f"Unexpected server error: {str(e)}"}), 500
+        print(f"❌ Error: {type(e).__name__} - {e}")
+        return jsonify({"error": str(e)}), 500
 
 
-# ---- Render deployment safe ----
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Render dynamically assigns port
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
