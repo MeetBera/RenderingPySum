@@ -156,6 +156,7 @@ from summary import get_summary
 app = Flask(__name__)
 CORS(app)  # ✅ allow frontend (React/Next.js) access from another origin
 
+
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "✅ Flask summarizer API running on Render"}), 200
@@ -184,16 +185,24 @@ def summarize():
             "transcript": result.get("transcript", "").strip()
         }), 200
 
-    # ---- Handle OpenAI rate limit explicitly ----
-    except openai.error.RateLimitError:
-        return jsonify({
-            "error": "OpenAI API rate limit reached. Try again later."
-        }), 429
+    # ---- Handle OpenAI rate limit or service errors ----
+    except openai.RateLimitError as e:
+        print(f"⚠️ OpenAI Rate Limit: {e}")
+        return jsonify({"error": "OpenAI API rate limit reached. Try again later."}), 429
 
-    # ---- Catch-all error (log for Render) ----
+    except openai.APIConnectionError as e:
+        print(f"🌐 Connection error: {e}")
+        return jsonify({"error": "Connection error with OpenAI API."}), 503
+
+    except openai.APIStatusError as e:
+        print(f"⚠️ OpenAI returned error {e.status_code}: {e.response}")
+        return jsonify({"error": f"OpenAI service error ({e.status_code})."}), e.status_code
+
+    # ---- Catch-all (Render or internal) ----
     except Exception as e:
-        print(f"❌ Flask summarize() error: {e}")
-        return jsonify({"error": str(e)}), 500
+        err_type = type(e).__name__
+        print(f"❌ [{err_type}] Flask summarize() error: {e}")
+        return jsonify({"error": f"Unexpected server error: {str(e)}"}), 500
 
 
 # ---- Render deployment safe ----
