@@ -355,8 +355,9 @@ import json
 import tempfile
 import urllib.request
 from urllib.parse import urlparse, parse_qs
+from http.client import IncompleteRead
 
-import openai
+from openai import OpenAI, OpenAIError
 from youtube_transcript_api import YouTubeTranscriptApi
 from pytube import YouTube
 from vosk import Model, KaldiRecognizer
@@ -375,14 +376,25 @@ def get_video_id(yt_url):
 
 
 # ----------------------------
-# Try to get transcript via YouTube captions
+# Try to get transcript via YouTube captions (modern version)
 # ----------------------------
 def get_transcript_youtube(video_id):
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=["hi", "en"])
-        transcript = " ".join([t["text"] for t in transcript_list])
-        print("✅ Transcript fetched from YouTube captions.")
-        return transcript
+        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+
+        # Try Hindi or English transcript
+        for lang in ["hi", "en"]:
+            try:
+                t = transcripts.find_transcript([lang])
+                transcript = " ".join([seg["text"] for seg in t.fetch()])
+                print(f"✅ Transcript fetched in {lang.upper()} from YouTube captions.")
+                return transcript
+            except Exception:
+                continue
+
+        print("⚠️ No valid transcript language found.")
+        return None
+
     except Exception as e:
         print(f"⚠️ YouTube captions not available: {e}")
         return None
@@ -394,73 +406,84 @@ def get_transcript_youtube(video_id):
 def get_transcript_vosk(yt_url):
     print("🎧 Using Vosk for offline speech recognition...")
 
-    yt = YouTube(yt_url)
-    audio_stream = yt.streams.filter(only_audio=True).first()
+    try:
+        yt = YouTube(yt_url)
+        audio_stream = yt.streams.filter(only_audio=True).first()
 
-    # Temporary directory (Render's ephemeral FS)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        audio_path = os.path.join(tmpdir, "audio.mp4")
-        wav_path = os.path.join(tmpdir, "audio.wav")
+        # Use temporary directory (Render-safe ephemeral FS)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = os.path.join(tmpdir, "audio.mp4")
+            wav_path = os.path.join(tmpdir, "audio.wav")
 
-        print("⬇️ Downloading YouTube audio...")
-        audio_stream.download(filename=audio_path)
+            print("⬇️ Downloading YouTube audio...")
+            audio_stream.download(filename=audio_path)
 
-        print("🔄 Converting to WAV...")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+            print("🔄 Converting to WAV...")
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
 
-        model_dir = os.path.join(tmpdir, "vosk-model-small-en-us-0.15")
-        if not os.path.exists(model_dir):
-            print("📦 Downloading Vosk model...")
-            model_url = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
-            zip_path = os.path.join(tmpdir, "vosk_model.zip")
-            urllib.request.urlretrieve(model_url, zip_path)
-            subprocess.run(["unzip", "-q", zip_path, "-d", tmpdir])
+            model_dir = os.path.join(tmpdir, "vosk-model-small-en-us-0.15")
+            if not os.path.exists(model_dir):
+                print("📦 Downloading Vosk model...")
+                model_url = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+                zip_path = os.path.join(tmpdir, "vosk_model.zip")
+                urllib.request.urlretrieve(model_url, zip_path)
+                subprocess.run(["unzip", "-q", zip_path, "-d", tmpdir])
 
-        wf = wave.open(wav_path, "rb")
-        rec = KaldiRecognizer(Model(model_dir), wf.getframerate())
+            wf = wave.open(wav_path, "rb")
+            rec = KaldiRecognizer(Model(model_dir), wf.getframerate())
 
-        result_text = ""
-        while True:
-            data = wf.readframes(4000)
-            if len(data) == 0:
-                break
-            if rec.AcceptWaveform(data):
-                result_text += json.loads(rec.Result()).get("text", "") + " "
+            result_text = ""
+            while True:
+                data = wf.readframes(4000)
+                if len(data) == 0:
+                    break
+                if rec.AcceptWaveform(data):
+                    result_text += json.loads(rec.Result()).get("text", "") + " "
 
-        wf.close()
+            wf.close()
 
-    print("✅ Transcript created using Vosk.")
-    return result_text
+        print("✅ Transcript created using Vosk.")
+        return result_text.strip()
+
+    except Exception as e:
+        print(f"❌ Vosk transcription failed: {e}")
+        return None
 
 
 # -------------------------------------------------
-# Chunk-based summarization using OpenAI
+# Chunk-based summarization using OpenAI (no retry)
 # -------------------------------------------------
 def explain_in_chunks(transcript, openai_api_key, chunk_size=1500):
-    openai.api_key = openai_api_key
+    client = OpenAI(api_key=openai_api_key)
     chunks = textwrap.wrap(transcript, chunk_size)
     explanations = []
 
     for i, chunk in enumerate(chunks, start=1):
         print(f"🧠 Summarizing chunk {i}/{len(chunks)}...")
-        prompt = f"Summarize this text in simple, human-like bullet points:\n\n{chunk}"
 
-        # single-shot attempt only, no retry
-        response = openai.ChatCompletion.create(
-            model="gpt-oss-20b",
-            messages=[
-                {"role": "system", "content": "You are a helpful summarizer."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5,
-            max_tokens=1000
-        )
+        try:
+            response = client.chat.completions.create(
+                model="gpt-oss-20b",
+                messages=[
+                    {"role": "system", "content": "You are a concise and human-like summarizer."},
+                    {"role": "user", "content": f"Summarize this in bullet points:\n\n{chunk}"}
+                ],
+                temperature=0.5,
+                max_tokens=800,
+            )
+            content = response.choices[0].message.content.strip()
+            explanations.append(content)
 
-        content = response.choices[0].message.content.strip()
-        explanations.append(content)
+        except OpenAIError as e:
+            print(f"❌ OpenAI error on chunk {i}: {e}")
+            raise RuntimeError(f"OpenAI summarization failed: {e}")
+
+        except IncompleteRead:
+            print("⚠️ Incomplete response from API. Stopping early.")
+            break
 
     return "\n\n".join(explanations)
 
@@ -477,11 +500,13 @@ def get_summary(yt_url, openai_api_key=None):
 
     video_id = get_video_id(yt_url)
     if not video_id:
-        raise ValueError("Invalid YouTube URL or missing video ID")
+        raise ValueError("Invalid YouTube URL or missing video ID.")
 
     transcript = get_transcript_youtube(video_id)
     if not transcript or len(transcript.strip()) < 10:
+        print("⚠️ Falling back to Vosk transcription...")
         transcript = get_transcript_vosk(yt_url)
+
     if not transcript:
         raise RuntimeError("Failed to obtain transcript via both YouTube and Vosk.")
 
