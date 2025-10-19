@@ -347,169 +347,109 @@
 #         "summary": summary
 #     }
 
-import os
-import textwrap
-import subprocess
-import wave
-import json
-import tempfile
-import urllib.request
+import os, json, textwrap, tempfile, subprocess, wave, urllib.request
 from urllib.parse import urlparse, parse_qs
-from http.client import IncompleteRead
-
 from openai import OpenAI, OpenAIError
 from youtube_transcript_api import YouTubeTranscriptApi
 from pytube import YouTube
 from vosk import Model, KaldiRecognizer
 
 
-# ----------------------------
-# Extract video ID from YouTube URL
-# ----------------------------
-def get_video_id(yt_url):
-    parsed_url = urlparse(yt_url)
-    if parsed_url.hostname in ["youtu.be"]:
-        return parsed_url.path[1:]
-    elif parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
-        return parse_qs(parsed_url.query).get("v", [None])[0]
+# --- Extract YouTube Video ID ---
+def get_video_id(url):
+    parsed = urlparse(url)
+    if parsed.hostname == "youtu.be":
+        return parsed.path[1:]
+    if "youtube.com" in parsed.hostname:
+        return parse_qs(parsed.query).get("v", [None])[0]
     return None
 
 
-# ----------------------------
-# Try to get transcript via YouTube captions (modern version)
-# ----------------------------
+# --- Get YouTube Captions ---
 def get_transcript_youtube(video_id):
     try:
         transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-
-        # Try Hindi or English transcript
         for lang in ["hi", "en"]:
             try:
                 t = transcripts.find_transcript([lang])
-                transcript = " ".join([seg["text"] for seg in t.fetch()])
-                print(f"✅ Transcript fetched in {lang.upper()} from YouTube captions.")
-                return transcript
+                return " ".join(seg["text"] for seg in t.fetch())
             except Exception:
                 continue
-
-        print("⚠️ No valid transcript language found.")
-        return None
-
-    except Exception as e:
-        print(f"⚠️ YouTube captions not available: {e}")
-        return None
+    except Exception:
+        pass
+    return None
 
 
-# ----------------------------
-# Fallback: Get transcript using Vosk (offline)
-# ----------------------------
+# --- Fallback: Vosk Speech Recognition ---
 def get_transcript_vosk(yt_url):
-    print("🎧 Using Vosk for offline speech recognition...")
-
     try:
         yt = YouTube(yt_url)
-        audio_stream = yt.streams.filter(only_audio=True).first()
+        audio = yt.streams.filter(only_audio=True).first()
 
-        # Use temporary directory (Render-safe ephemeral FS)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            audio_path = os.path.join(tmpdir, "audio.mp4")
-            wav_path = os.path.join(tmpdir, "audio.wav")
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_path, wav_path = [os.path.join(tmp, f"audio.{ext}") for ext in ("mp4", "wav")]
+            audio.download(filename=audio_path)
+            subprocess.run(["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-            print("⬇️ Downloading YouTube audio...")
-            audio_stream.download(filename=audio_path)
-
-            print("🔄 Converting to WAV...")
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", audio_path, "-ar", "16000", "-ac", "1", wav_path],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-
-            model_dir = os.path.join(tmpdir, "vosk-model-small-en-us-0.15")
+            model_dir = os.path.join(tmp, "vosk-model-small-en-us-0.15")
             if not os.path.exists(model_dir):
-                print("📦 Downloading Vosk model...")
                 model_url = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
-                zip_path = os.path.join(tmpdir, "vosk_model.zip")
+                zip_path = os.path.join(tmp, "vosk.zip")
                 urllib.request.urlretrieve(model_url, zip_path)
-                subprocess.run(["unzip", "-q", zip_path, "-d", tmpdir])
+                subprocess.run(["unzip", "-q", zip_path, "-d", tmp])
 
+            rec = KaldiRecognizer(Model(model_dir), wave.open(wav_path).getframerate())
             wf = wave.open(wav_path, "rb")
-            rec = KaldiRecognizer(Model(model_dir), wf.getframerate())
-
-            result_text = ""
+            text = ""
             while True:
                 data = wf.readframes(4000)
-                if len(data) == 0:
+                if not data:
                     break
                 if rec.AcceptWaveform(data):
-                    result_text += json.loads(rec.Result()).get("text", "") + " "
-
+                    text += json.loads(rec.Result()).get("text", "") + " "
             wf.close()
-
-        print("✅ Transcript created using Vosk.")
-        return result_text.strip()
-
-    except Exception as e:
-        print(f"❌ Vosk transcription failed: {e}")
+        return text.strip()
+    except Exception:
         return None
 
 
-# -------------------------------------------------
-# Chunk-based summarization using OpenAI (no retry)
-# -------------------------------------------------
-def explain_in_chunks(transcript, openai_api_key, chunk_size=1500):
-    client = OpenAI(api_key=openai_api_key)
+# --- Summarize Transcript with OpenAI ---
+def explain_in_chunks(transcript, api_key, chunk_size=1500):
+    client = OpenAI(api_key=api_key)
     chunks = textwrap.wrap(transcript, chunk_size)
-    explanations = []
+    summaries = []
 
-    for i, chunk in enumerate(chunks, start=1):
-        print(f"🧠 Summarizing chunk {i}/{len(chunks)}...")
-
+    for chunk in chunks:
         try:
-            response = client.chat.completions.create(
-                model="gpt-oss-20b",
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a concise and human-like summarizer."},
-                    {"role": "user", "content": f"Summarize this in bullet points:\n\n{chunk}"}
+                    {"role": "system", "content": "You summarize clearly and concisely in bullet points."},
+                    {"role": "user", "content": f"Summarize this:\n{chunk}"}
                 ],
-                temperature=0.5,
-                max_tokens=800,
+                temperature=0.5, max_tokens=700,
             )
-            content = response.choices[0].message.content.strip()
-            explanations.append(content)
-
-        except OpenAIError as e:
-            print(f"❌ OpenAI error on chunk {i}: {e}")
+            summaries.append(res.choices[0].message.content.strip())
+        except (OpenAIError, Exception) as e:
             raise RuntimeError(f"OpenAI summarization failed: {e}")
 
-        except IncompleteRead:
-            print("⚠️ Incomplete response from API. Stopping early.")
-            break
-
-    return "\n\n".join(explanations)
+    return "\n\n".join(summaries)
 
 
-# -----------------------------------------
-# Main: Get summary from YouTube
-# -----------------------------------------
-def get_summary(yt_url, openai_api_key=None):
-    if not openai_api_key:
-        openai_api_key = os.getenv("OPENAI_API_KEY")
+# --- Main Function ---
+def get_summary(yt_url, api_key=None):
+    api_key = api_key or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing OpenAI API key.")
 
-    if not openai_api_key:
-        raise RuntimeError("Missing OPENAI_API_KEY in environment or argument.")
+    vid = get_video_id(yt_url)
+    if not vid:
+        raise ValueError("Invalid YouTube URL.")
 
-    video_id = get_video_id(yt_url)
-    if not video_id:
-        raise ValueError("Invalid YouTube URL or missing video ID.")
-
-    transcript = get_transcript_youtube(video_id)
-    if not transcript or len(transcript.strip()) < 10:
-        print("⚠️ Falling back to Vosk transcription...")
-        transcript = get_transcript_vosk(yt_url)
-
+    transcript = get_transcript_youtube(vid) or get_transcript_vosk(yt_url)
     if not transcript:
-        raise RuntimeError("Failed to obtain transcript via both YouTube and Vosk.")
+        raise RuntimeError("Failed to retrieve transcript from both sources.")
 
-    print("📝 Transcript preview:\n", transcript[:400] + "...")
-    summary = explain_in_chunks(transcript, openai_api_key)
+    summary = explain_in_chunks(transcript, api_key)
     return {"transcript": transcript, "summary": summary}
