@@ -1,0 +1,1 @@
+.youtube.com	TRUE	/	TRUE	1779378978	PREF	f4=4000000&f6=40000000&tz=Asia.Calcutta&f7=140&f5=20000
