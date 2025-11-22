@@ -5,6 +5,7 @@ import json
 import google.generativeai as genai
 import yt_dlp
 import contextlib
+import requests
 
 def configure_gemini():
     api_key = os.getenv("GEMINI_API_KEY")
@@ -13,42 +14,31 @@ def configure_gemini():
     genai.configure(api_key=api_key)
 
 def download_audio(url):
-    temp_dir = "/tmp"
-    audio_path = os.path.join(temp_dir, "audio.%(ext)s")
-
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "progress_hooks": [],
-        "format": "bestaudio/best",
-        "outtmpl": audio_path,
-        "cookiefile": "youtube.com_cookies.txt",
-        "headers": {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-            )
-        },
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
-    }
-
     try:
-        with contextlib.redirect_stdout(open(os.devnull, "w")), contextlib.redirect_stderr(open(os.devnull, "w")):
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+        video_id = url.split("v=")[-1]
 
-        final_path = audio_path.replace("%(ext)s", "mp3")
-        if not os.path.exists(final_path):
-            raise FileNotFoundError("Audio file not created")
-        return final_path
+        api_url = f"https://pipedapi.kavin.rocks/streams/{video_id}"
+
+        r = requests.get(api_url, timeout=10)
+        info = r.json()
+
+        # Get the highest-quality audio stream URL
+        audio_url = info["audioStreams"][0]["url"]
+
+        # Download audio directly
+        tmp = tempfile.mkdtemp()
+        file_path = os.path.join(tmp, "audio.mp3")
+
+        with requests.get(audio_url, stream=True) as resp:
+            resp.raise_for_status()
+            with open(file_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+        return file_path
 
     except Exception as e:
-        print(f"Audio download failed: {e}", file=sys.stderr)
+        print("Audio download failed:", e)
         return None
 
 
