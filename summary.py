@@ -13,7 +13,7 @@ def configure_gemini():
     genai.configure(api_key=api_key)
 
 def download_audio(url):
-    temp_dir = tempfile.mkdtemp()
+    temp_dir = "/tmp"
     audio_path = os.path.join(temp_dir, "audio.%(ext)s")
 
     ydl_opts = {
@@ -22,6 +22,13 @@ def download_audio(url):
         "progress_hooks": [],
         "format": "bestaudio/best",
         "outtmpl": audio_path,
+        "headers": {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+            )
+        },
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
