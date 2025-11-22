@@ -17,37 +17,28 @@ def download_audio(url):
     temp_dir = "/tmp"
     audio_path = os.path.join(temp_dir, "audio.%(ext)s")
 
+    COOKIE_PATH = os.path.join(os.path.dirname(__file__), "cookies/youtube_cookies.txt")
+
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "format": "bestaudio/best",
         "outtmpl": audio_path,
-
-        # CRITICAL FIXES
-        "default_search": "auto",
-        "extractor_args": {
-            "youtube": {
-                "player_skip": ["web", "web_spherical"]
-            }
-        },
-
-        # Good headers
+        "cookiefile": COOKIE_PATH,
         "http_headers": {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                "AppleWebKit/537.36 (KHTML, like Gecko)"
                 "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
+            )
         },
-
-        # Convert to MP3
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }],
     }
+
 
     try:
         with contextlib.redirect_stdout(open(os.devnull, "w")), \
