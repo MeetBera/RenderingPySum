@@ -14,32 +14,57 @@ def configure_gemini():
     genai.configure(api_key=api_key)
 
 def download_audio(url):
+    temp_dir = "/tmp"
+    audio_path = os.path.join(temp_dir, "audio.%(ext)s")
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "format": "bestaudio/best",
+        "outtmpl": audio_path,
+
+        # CRITICAL FIXES
+        "default_search": "auto",
+        "extractor_args": {
+            "youtube": {
+                "player_skip": ["web", "web_spherical"]
+            }
+        },
+
+        # Good headers
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+
+        # Convert to MP3
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+    }
+
     try:
-        video_id = url.split("v=")[-1]
+        with contextlib.redirect_stdout(open(os.devnull, "w")), \
+             contextlib.redirect_stderr(open(os.devnull, "w")):
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
 
-        api_url = f"https://pipedapi.kavin.rocks/streams/{video_id}"
+        final_path = audio_path.replace("%(ext)s", "mp3")
+        if os.path.exists(final_path):
+            return final_path
 
-        r = requests.get(api_url, timeout=10)
-        info = r.json()
-
-        # Get the highest-quality audio stream URL
-        audio_url = info["audioStreams"][0]["url"]
-
-        # Download audio directly
-        tmp = tempfile.mkdtemp()
-        file_path = os.path.join(tmp, "audio.mp3")
-
-        with requests.get(audio_url, stream=True) as resp:
-            resp.raise_for_status()
-            with open(file_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-        return file_path
+        return None
 
     except Exception as e:
-        print("Audio download failed:", e)
+        print(f"Audio download failed: {e}", file=sys.stderr)
         return None
+
 
 
 def transcribe_with_gemini(audio_path):
