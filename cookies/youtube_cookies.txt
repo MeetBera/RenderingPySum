@@ -1,2 +1,7 @@
 # Netscape HTTP Cookie File
-.youtube.com	TRUE	/	TRUE	1779378978	PREF	f4=4000000&f6=40000000&tz=Asia.Calcutta&f7=140&f5=20000
+
+.youtube.com	TRUE	/	TRUE	1798474168	PREF	f4=4000000&f6=40000000&tz=Asia.Calcutta&f5=30000
+.youtube.com	TRUE	/	TRUE	1763915745	GPS	1
+.youtube.com	TRUE	/	TRUE	1763914612	CONSISTENCY	AKreu9uDgLjuFULR-p4l7_1Jje_0YXG-cs8wDFsx3xlz2GEFrp7wakBZR4lH0aDjWuPcw7wiA_H8kxUKOnfs6OMs_z_NF1hdRfOG7GZbnoq_tINpgNKHEHbof0u03h0eLK16jIF0opZieStsXjHJDw8
+.youtube.com	TRUE	/	TRUE	1779466166	VISITOR_INFO1_LIVE	xcS90zJYDOw
+.youtube.com	TRUE	/	TRUE	0	YSC	_vwwjxoIsMI
