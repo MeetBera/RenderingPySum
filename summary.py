@@ -17,19 +17,25 @@ def download_audio(url):
     temp_dir = "/tmp"
     audio_path = os.path.join(temp_dir, "audio.%(ext)s")
 
-    COOKIE_PATH = os.path.join(os.path.dirname(__file__), "cookies/youtube_cookies.txt")
+    COOKIE_PATH = os.path.join(os.path.dirname(__file__), "cookies", "youtube_cookies.txt")
+
+    # Debug: ensure path exists
+    if not os.path.exists(COOKIE_PATH):
+        print(f"COOKIE FILE NOT FOUND: {COOKIE_PATH}", file=sys.stderr)
+    else:
+        print(f"USING COOKIE FILE: {COOKIE_PATH}", file=sys.stderr)
 
     ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": False,  # MUST be False for debugging
+        "no_warnings": False,
+        "cookiefile": COOKIE_PATH,
         "format": "bestaudio/best",
         "outtmpl": audio_path,
-        "cookiefile": COOKIE_PATH,
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                "AppleWebKit/537.36 (KHTML, like Gecko)"
-                "Chrome/124.0.0.0 Safari/537.36"
+                " AppleWebKit/537.36 (KHTML, like Gecko)"
+                " Chrome/124.0.0.0 Safari/537.36"
             )
         },
         "postprocessors": [{
@@ -39,6 +45,19 @@ def download_audio(url):
         }],
     }
 
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            result = ydl.download([url])
+
+        final_path = audio_path.replace("%(ext)s", "mp3")
+        if os.path.exists(final_path):
+            return final_path
+        return None
+
+    except Exception as e:
+        print(f"Audio download failed: {e}", file=sys.stderr)
+        return None
+        
 
     try:
         with contextlib.redirect_stdout(open(os.devnull, "w")), \
