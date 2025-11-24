@@ -45,12 +45,12 @@ def download_audio(url):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            video_id = info.get("id")
+            title = info.get("title", "No Title")
+            description = info.get("description", "")
 
-        # Extract metadata
-        video_id = info.get("id")
-        title = info.get("title", "No Title")
-        description = info.get("description", "")
 
         # Aggressive memory cleanup
         del info
@@ -101,7 +101,7 @@ def transcribe_with_gemini(audio_path):
         raise ValueError("Audio processing failed by Gemini")
 
     print("\nGenerating transcript...")
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
 
     response = model.generate_content([
         audio_file,
@@ -130,6 +130,10 @@ def explain_with_gemini(transcript, title="", description=""):
     - (Bullet points)
     """
     response = model.generate_content(prompt)
+    try:
+        genai.delete_file(audio_file.name)
+    except Exception:
+        pass
     return response.text
 
 # --- MAIN EXECUTION BLOCK (Example usage) ---
@@ -151,7 +155,9 @@ if __name__ == "__main__":
             print(summary)
             
             # Cleanup local file
-            os.remove(path)
+            if path and os.path.exists(path):
+                os.remove(path)
+
         except Exception as e:
             print(f"AI Error: {e}")
     else:
