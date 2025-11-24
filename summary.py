@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import shutil  # Add this import at the top
 import google.generativeai as genai
 import yt_dlp
 
@@ -11,32 +12,48 @@ def configure_gemini():
         raise ValueError("GEMINI_API_KEY environment variable not set")
     genai.configure(api_key=api_key)
 
+
 def download_audio(url):
-    # Render/Linux uses /tmp. Ensure we clean up old files if needed.
+    # Render/Linux uses /tmp.
     temp_dir = "/tmp"
     audio_path_template = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
 
-    # COOKIE SETUP
-    # Ensure this path matches EXACTLY where you upload the file in Render
-    COOKIE_PATH = "/etc/secrets/youtube.com_cookies.txt"
+    # 1. DEFINE SOURCE AND DESTINATION FOR COOKIES
+    # The read-only secret file provided by Render
+    secret_cookie_path = "/etc/secrets/youtube.com_cookies.txt"
+    # A writable location in temp
+    temp_cookie_path = os.path.join(temp_dir, "youtube_cookies.txt")
 
-    if not os.path.exists(COOKIE_PATH):
-        print(f"❌ COOKIE FILE NOT FOUND AT: {COOKIE_PATH}", file=sys.stderr)
-        # Attempting without cookies might work for some videos, but likely fail for bot checks
+    # 2. COPY THE COOKIE FILE TO TEMP (To avoid Read-Only errors)
+    final_cookie_path = None
+    
+    if os.path.exists(secret_cookie_path):
+        try:
+            # Copy secret file to /tmp so yt-dlp can write/lock if it needs to
+            shutil.copy(secret_cookie_path, temp_cookie_path)
+            final_cookie_path = temp_cookie_path
+            print(f"✅ Cookies copied to writable temp: {final_cookie_path}", file=sys.stderr)
+        except Exception as e:
+            print(f"⚠️ Could not copy cookies: {e}", file=sys.stderr)
+            # Fallback to secret path (might fail if yt-dlp tries to write)
+            final_cookie_path = secret_cookie_path
     else:
-        print(f"✅ USING COOKIE FILE: {COOKIE_PATH}", file=sys.stderr)
+        # Fallback for local testing
+        if os.path.exists("youtube.com_cookies.txt"):
+            final_cookie_path = "youtube.com_cookies.txt"
+        else:
+            print(f"❌ COOKIE FILE NOT FOUND AT: {secret_cookie_path}", file=sys.stderr)
 
     ydl_opts = {
         "quiet": True, 
         "no_warnings": True,
-        "cookiefile": COOKIE_PATH if os.path.exists(COOKIE_PATH) else None,
+        "cookiefile": final_cookie_path, # Use the writable temp path
         "format": "bestaudio/best",
         "outtmpl": audio_path_template,
-        # REMOVED Hardcoded User-Agent: Let yt-dlp match the user agent to the cookies automatically
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
-            "preferredquality": "128", # 128 is sufficient for AI speech text, saves bandwidth
+            "preferredquality": "128", 
         }],
     }
 
@@ -44,11 +61,12 @@ def download_audio(url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             video_id = info.get('id')
-            # Construct the final filename that yt-dlp created
             final_path = os.path.join(temp_dir, f"audio_{video_id}.mp3")
             
             if os.path.exists(final_path):
+                # Return the 3 values expected
                 return final_path, info.get('title', 'No Title'), info.get('description', '')
+            
             return None, None, None
 
     except Exception as e:
