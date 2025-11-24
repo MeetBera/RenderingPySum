@@ -5,6 +5,7 @@ from summary import (
     transcribe_with_gemini,
     explain_with_gemini
 )
+import os
 
 app = Flask(__name__)
 configure_gemini()  # Load Gemini API key from environment
@@ -24,17 +25,23 @@ def summarize_video():
     url = data["url"]
 
     try:
-        # FIX: unpack all 3 return values
+        # Unpack all 3 values returned by download_audio()
         audio_path, title, description = download_audio(url)
 
         if not audio_path:
             return jsonify({"error": "Audio download failed"}), 500
 
-        # Transcribe
+        # Transcription
         transcript = transcribe_with_gemini(audio_path)
 
-        # Summarize
+        # Summary generation
         summary = explain_with_gemini(transcript, title, description)
+
+        # Auto-cleanup audio file
+        try:
+            os.remove(audio_path)
+        except Exception:
+            pass
 
         return jsonify({
             "summary": summary,
