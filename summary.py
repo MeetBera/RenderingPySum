@@ -76,32 +76,40 @@ def download_audio(url):
 
 def transcribe_with_gemini(audio_path):
     print("Uploading file to Gemini...")
-    # 1. Upload the file using the File API (Better for large files)
-    audio_file = genai.upload_file(audio_path, mime_type="audio/mp3")
-    
-    # 2. Wait for processing (File API is async for processing)
+
+    # Detect MIME type based on extension
+    ext = audio_path.split(".")[-1].lower()
+    if ext == "webm":
+        mime = "audio/webm"
+    elif ext == "m4a":
+        mime = "audio/mp4"
+    elif ext == "mp3":
+        mime = "audio/mp3"
+    else:
+        mime = "audio/*"
+
+    # Upload file
+    audio_file = genai.upload_file(audio_path, mime_type=mime)
+
+    # Wait for processing
     while audio_file.state.name == "PROCESSING":
         print(".", end="", flush=True)
-        time.sleep(2)
+        time.sleep(1)
         audio_file = genai.get_file(audio_file.name)
 
     if audio_file.state.name == "FAILED":
         raise ValueError("Audio processing failed by Gemini")
 
     print("\nGenerating transcript...")
-    # 3. Use the correct model name
-    model = genai.GenerativeModel("gemini-1.5-flash") 
-    
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
     response = model.generate_content([
         audio_file,
         "Transcribe this audio accurately in English. Ignore background noise."
     ])
-    
-    # Cleanup: Delete file from Gemini cloud storage to save quota
-    # (Optional but recommended)
-    # genai.delete_file(audio_file.name) 
-    
+
     return response.text
+
 
 def explain_with_gemini(transcript, title="", description=""):
     model = genai.GenerativeModel("gemini-1.5-flash")
