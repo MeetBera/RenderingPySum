@@ -1,7 +1,8 @@
 import sys
 import os
 import time
-import shutil  # Add this import at the top
+import shutil 
+import gc  # <--- [FIX 1] Import Garbage Collection
 import google.generativeai as genai
 import yt_dlp
 
@@ -12,60 +13,58 @@ def configure_gemini():
         raise ValueError("GEMINI_API_KEY environment variable not set")
     genai.configure(api_key=api_key)
 
-
 def download_audio(url):
-    # Render/Linux uses /tmp.
     temp_dir = "/tmp"
     audio_path_template = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
 
-    # 1. DEFINE SOURCE AND DESTINATION FOR COOKIES
-    # The read-only secret file provided by Render
+    # 1. COOKIE SETUP (Correct)
     secret_cookie_path = "/etc/secrets/youtube.com_cookies.txt"
-    # A writable location in temp
     temp_cookie_path = os.path.join(temp_dir, "youtube_cookies.txt")
-
-    # 2. COPY THE COOKIE FILE TO TEMP (To avoid Read-Only errors)
     final_cookie_path = None
     
     if os.path.exists(secret_cookie_path):
         try:
-            # Copy secret file to /tmp so yt-dlp can write/lock if it needs to
             shutil.copy(secret_cookie_path, temp_cookie_path)
             final_cookie_path = temp_cookie_path
             print(f"✅ Cookies copied to writable temp: {final_cookie_path}", file=sys.stderr)
         except Exception as e:
             print(f"⚠️ Could not copy cookies: {e}", file=sys.stderr)
-            # Fallback to secret path (might fail if yt-dlp tries to write)
             final_cookie_path = secret_cookie_path
     else:
-        # Fallback for local testing
         if os.path.exists("youtube.com_cookies.txt"):
             final_cookie_path = "youtube.com_cookies.txt"
-        else:
-            print(f"❌ COOKIE FILE NOT FOUND AT: {secret_cookie_path}", file=sys.stderr)
 
     ydl_opts = {
         "quiet": True, 
         "no_warnings": True,
-        "cookiefile": final_cookie_path, # Use the writable temp path
+        "cookiefile": final_cookie_path,
         "format": "bestaudio/best",
         "outtmpl": audio_path_template,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
-            "preferredquality": "128", 
+            "preferredquality": "64",  # <--- [FIX 2] Reduced Quality (128 -> 64) to save RAM
         }],
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            
+            # Extract data
             video_id = info.get('id')
+            title = info.get('title', 'No Title')
+            description = info.get('description', '')
+            
+            # <--- [FIX 3] AGGRESSIVE MEMORY CLEANUP
+            # Immediately delete the heavy 'info' dictionary and free RAM
+            del info
+            gc.collect() 
+            
             final_path = os.path.join(temp_dir, f"audio_{video_id}.mp3")
             
             if os.path.exists(final_path):
-                # Return the 3 values expected
-                return final_path, info.get('title', 'No Title'), info.get('description', '')
+                return final_path, title, description
             
             return None, None, None
 
