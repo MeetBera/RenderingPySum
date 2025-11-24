@@ -17,7 +17,7 @@ def download_audio(url):
     temp_dir = "/tmp"
     audio_path_template = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
 
-    # 1. COOKIE SETUP (Correct)
+    # COOKIE SETUP
     secret_cookie_path = "/etc/secrets/youtube.com_cookies.txt"
     temp_cookie_path = os.path.join(temp_dir, "youtube_cookies.txt")
     final_cookie_path = None
@@ -34,43 +34,45 @@ def download_audio(url):
         if os.path.exists("youtube.com_cookies.txt"):
             final_cookie_path = "youtube.com_cookies.txt"
 
+    # NO FFMPEG ANYMORE
     ydl_opts = {
-        "quiet": True, 
+        "quiet": True,
         "no_warnings": True,
         "cookiefile": final_cookie_path,
-        "format": "bestaudio/best",
+        "format": "bestaudio/best",       # yt-dlp will download native audio (webm/m4a)
         "outtmpl": audio_path_template,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "64",  # <--- [FIX 2] Reduced Quality (128 -> 64) to save RAM
-        }],
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            
-            # Extract data
-            video_id = info.get('id')
-            title = info.get('title', 'No Title')
-            description = info.get('description', '')
-            
-            # <--- [FIX 3] AGGRESSIVE MEMORY CLEANUP
-            # Immediately delete the heavy 'info' dictionary and free RAM
-            del info
-            gc.collect() 
-            
-            final_path = os.path.join(temp_dir, f"audio_{video_id}.mp3")
-            
-            if os.path.exists(final_path):
-                return final_path, title, description
-            
-            return None, None, None
+
+        # Extract metadata
+        video_id = info.get("id")
+        title = info.get("title", "No Title")
+        description = info.get("description", "")
+
+        # Aggressive memory cleanup
+        del info
+        gc.collect()
+
+        # NEW FINAL PATH LOGIC (detect webm/m4a/mp3)
+        downloaded_file = None
+        for ext in ("webm", "m4a", "mp3"):
+            candidate = os.path.join(temp_dir, f"audio_{video_id}.{ext}")
+            if os.path.exists(candidate):
+                downloaded_file = candidate
+                break
+
+        if downloaded_file:
+            return downloaded_file, title, description
+
+        return None, None, None
 
     except Exception as e:
         print(f"❌ Audio download failed: {e}", file=sys.stderr)
         return None, None, None
+        
 
 def transcribe_with_gemini(audio_path):
     print("Uploading file to Gemini...")
