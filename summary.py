@@ -18,7 +18,7 @@ def download_audio(url):
 
     # COOKIE SETUP
     # Ensure this path matches EXACTLY where you upload the file in Render
-    COOKIE_PATH = os.path.join(os.getcwd(), "cookies", "youtube_cookies.txt")
+    COOKIE_PATH = "/etc/secrets/youtube.com_cookies.txt"
 
     if not os.path.exists(COOKIE_PATH):
         print(f"❌ COOKIE FILE NOT FOUND AT: {COOKIE_PATH}", file=sys.stderr)
