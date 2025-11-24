@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify
-import yt_dlp
 from summary import (
     configure_gemini,
     download_audio,
@@ -25,21 +24,23 @@ def summarize_video():
     url = data["url"]
 
     try:
-        audio_path = download_audio(url)
+        # FIX: unpack all 3 return values
+        audio_path, title, description = download_audio(url)
+
         if not audio_path:
             return jsonify({"error": "Audio download failed"}), 500
 
+        # Transcribe
         transcript = transcribe_with_gemini(audio_path)
 
-        # Extract video metadata
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-        title = info.get("title", "")
-        description = info.get("description", "")
-
+        # Summarize
         summary = explain_with_gemini(transcript, title, description)
 
-        return jsonify({"summary": summary})
+        return jsonify({
+            "summary": summary,
+            "title": title,
+            "description": description[:500]
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
