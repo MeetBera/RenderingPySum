@@ -46,10 +46,10 @@ def download_audio(url):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_id = info.get("id")
-            title = info.get("title", "No Title")
-            description = info.get("description", "")
+                info = ydl.extract_info(url, download=True)
+                video_id = info.get("id")
+                title = info.get("title", "No Title")
+                description = info.get("description", "")
 
 
         # Aggressive memory cleanup
