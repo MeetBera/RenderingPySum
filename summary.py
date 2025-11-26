@@ -194,6 +194,7 @@ def configure_gemini():
 
 def download_audio(url):
     temp_dir = "/tmp"
+    # Force the output template to have .mp3 extension
     audio_path_template = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
 
     # COOKIE SETUP
@@ -205,50 +206,49 @@ def download_audio(url):
         try:
             shutil.copy(secret_cookie_path, temp_cookie_path)
             final_cookie_path = temp_cookie_path
-            print(f"✅ Cookies copied to writable temp: {final_cookie_path}", file=sys.stderr)
-        except Exception as e:
-            print(f"⚠️ Could not copy cookies: {e}", file=sys.stderr)
+        except Exception:
             final_cookie_path = secret_cookie_path
     elif os.path.exists("youtube.com_cookies.txt"):
         final_cookie_path = "youtube.com_cookies.txt"
 
-    # NO FFMPEG ANYMORE (Saves RAM/CPU)
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "cookiefile": final_cookie_path,
-        "format": "bestaudio/best",        # yt-dlp will download native audio (webm/m4a)
+        "format": "bestaudio/best",
         "outtmpl": audio_path_template,
+        # ✅ FORCE CONVERSION TO MP3
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "64", # Low quality (64k) to save RAM/CPU
+        }],
     }
 
     try:
-        # [FIXED] Removed duplicate 'with' statement
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             video_id = info.get("id")
             title = info.get("title", "No Title")
             description = info.get("description", "")
 
-        # [FIXED] Indentation is now correct (outside the 'with' block)
-        # Aggressive memory cleanup
+        # Memory Cleanup
         del info
         gc.collect()
 
-        # NEW FINAL PATH LOGIC (detect webm/m4a/mp3)
-        downloaded_file = None
-        # Check for common audio extensions yt-dlp uses
-        for ext in ("webm", "m4a", "mp3", "opus", "m4b"):
-            candidate = os.path.join(temp_dir, f"audio_{video_id}.{ext}")
-            if os.path.exists(candidate):
-                downloaded_file = candidate
-                break
+        # ✅ NOW WE KNOW EXACTLY WHERE IT IS
+        # yt-dlp automatically changes the extension to .mp3 after conversion
+        final_path = os.path.join(temp_dir, f"audio_{video_id}.mp3")
 
-        if downloaded_file:
-            return downloaded_file, title, description
-
-        print("❌ File downloaded but not found in temp dir", file=sys.stderr)
+        if os.path.exists(final_path):
+            return final_path, title, description
+        
+        print(f"❌ Error: File not found at {final_path}", file=sys.stderr)
         return None, None, None
 
+    except Exception as e:
+        print(f"❌ Audio download failed: {e}", file=sys.stderr)
+        return None, None, None
     except Exception as e:
         print(f"❌ Audio download failed: {e}", file=sys.stderr)
         return None, None, None
