@@ -174,6 +174,10 @@
 #             # Cleanup local file
 #             if path and os.path.exists(path):
 #                 os.remove(path)
+#         except Exception as e:
+#             print(f"AI Error: {e}")
+#     else:
+#         print("Download failed.")
 
 
 import sys
@@ -312,7 +316,7 @@ def transcribe_with_gemini(audio_path):
         raise e
 
 def explain_with_gemini(transcript, title="", description=""):
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     prompt = f"""
     You are an intelligent API. Explain the given YouTube transcript in clear, factual English.
     
@@ -360,7 +364,3 @@ if __name__ == "__main__":
             print(f"AI Error: {e}")
     else:
         print("Download failed.")
-#         except Exception as e:
-#             print(f"AI Error: {e}")
-#     else:
-#         print("Download failed.")
