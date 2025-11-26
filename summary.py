@@ -5,6 +5,7 @@ import shutil
 import gc  # <--- [FIX 1] Import Garbage Collection
 import google.generativeai as genai
 import yt_dlp
+import mimetypes
 
 # Configure Gemini
 def configure_gemini():
@@ -74,41 +75,57 @@ def download_audio(url):
         return None, None, None
         
 
+
 def transcribe_with_gemini(audio_path):
-    print("Uploading file to Gemini...")
+    print(f"Uploading file {audio_path} to Gemini...")
 
-    # Detect MIME type based on extension
-    ext = audio_path.split(".")[-1].lower()
-    if ext == "webm":
-        mime = "audio/webm"
-    elif ext == "m4a":
-        mime = "audio/mp4"
-    elif ext == "mp3":
-        mime = "audio/mp3"
-    else:
-        mime = "audio/*"
+    # 1. Robust MIME detection (Fixes the "Internal Server Error" / 500 issue)
+    mime, _ = mimetypes.guess_type(audio_path)
+    if not mime:
+        ext = audio_path.split(".")[-1].lower()
+        if ext == "webm":
+            mime = "audio/webm"
+        elif ext == "m4a":
+            mime = "audio/mp4"
+        elif ext == "mp3":
+            mime = "audio/mp3"
+        else:
+            mime = "audio/mp3" # Safe fallback
 
-    # Upload file
+    print(f"Detected MIME type: {mime}")
+
+    # 2. Upload file
     audio_file = genai.upload_file(audio_path, mime_type=mime)
 
-    # Wait for processing
+    # 3. Wait for processing
     while audio_file.state.name == "PROCESSING":
         print(".", end="", flush=True)
         time.sleep(1)
         audio_file = genai.get_file(audio_file.name)
 
     if audio_file.state.name == "FAILED":
+        print(f"\n❌ Gemini failed to process file. State: {audio_file.state.name}")
         raise ValueError("Audio processing failed by Gemini")
 
     print("\nGenerating transcript...")
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    
+    # ✅ REVERTED TO YOUR MODEL (You were right!)
+    model = genai.GenerativeModel("gemini-2.5-flash") 
 
-    response = model.generate_content([
-        audio_file,
-        "Transcribe this audio accurately in English. Ignore background noise."
-    ])
+    try:
+        response = model.generate_content([
+            audio_file,
+            "Transcribe this audio accurately in English. Ignore background noise."
+        ])
+        
+        if not response.text:
+            raise ValueError("Gemini returned an empty response.")
+            
+        return response.text
 
-    return response.text
+    except Exception as e:
+        print(f"Transcription Error: {e}")
+        raise e
 
 
 def explain_with_gemini(transcript, title="", description=""):
