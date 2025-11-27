@@ -16,7 +16,7 @@ def configure_gemini():
 
 def download_audio(url):
     temp_dir = "/tmp"
-    # Force the output template to have .mp3 extension
+    # We remove the specific extension from the template so yt-dlp can use the real one
     audio_path_template = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
 
     # COOKIE SETUP
@@ -37,7 +37,11 @@ def download_audio(url):
         "quiet": True, 
         "no_warnings": True,
         "cookiefile": final_cookie_path,
-        "format": "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio",
+        
+        # KEY CHANGE 1: Request 'worst' quality audio directly.
+        # This gets the smallest file possible (fastest download).
+        # We REMOVED the 'postprocessors' block so no conversion happens.
+        "format": "worst/bestaudio", 
         "outtmpl": audio_path_template,
     }
 
@@ -47,19 +51,32 @@ def download_audio(url):
             video_id = info.get("id")
             title = info.get("title", "No Title")
             description = info.get("description", "")
+            
+            # KEY CHANGE 2: Get the actual extension of the downloaded file
+            # yt-dlp tells us exactly what extension it used
+            ext = info.get('ext') 
 
         # Memory Cleanup
         del info
         gc.collect()
 
-        # ✅ NOW WE KNOW EXACTLY WHERE IT IS
-        # yt-dlp automatically changes the extension to .mp3 after conversion
-        final_path = os.path.join(temp_dir, f"audio_{video_id}.mp3")
+        # Construct the path using the extension we just learned
+        final_path = os.path.join(temp_dir, f"audio_{video_id}.{ext}")
 
         if os.path.exists(final_path):
             return final_path, title, description
         
+        # Fallback search if the extension logic failed for some reason
+        # Look for any file starting with 'audio_VIDEOID'
+        potential_files = [f for f in os.listdir(temp_dir) if f.startswith(f"audio_{video_id}")]
+        if potential_files:
+             return os.path.join(temp_dir, potential_files[0]), title, description
+
         print(f"❌ Error: File not found at {final_path}", file=sys.stderr)
+        return None, None, None
+
+    except Exception as e:
+        print(f"❌ Audio download failed: {e}", file=sys.stderr)
         return None, None, None
 
     except Exception as e:
@@ -72,25 +89,30 @@ def download_audio(url):
 def transcribe_with_gemini(audio_path):
     print(f"Uploading file {audio_path} to Gemini...")
 
-    # 1. Robust MIME detection (Fixes the "Internal Server Error" / 500 issue)
-    mime, _ = mimetypes.guess_type(audio_path)
-    if not mime:
-        ext = audio_path.split(".")[-1].lower()
-        if ext == "webm":
-            mime = "audio/webm"
-        elif ext == "m4a":
-            mime = "audio/mp4"
-        elif ext == "mp3":
-            mime = "audio/mp3"
+    # 1. Enhanced MIME Detection (Handles raw YouTube formats)
+    mime_type, _ = mimetypes.guess_type(audio_path)
+    
+    if not mime_type:
+        ext = audio_path.split('.')[-1].lower()
+        if ext == 'm4a':
+            mime_type = 'audio/mp4'
+        elif ext == 'webm':
+            mime_type = 'audio/webm'
+        elif ext == 'mp3':
+            mime_type = 'audio/mp3'
+        elif ext == 'opus' or ext == 'ogg':
+            mime_type = 'audio/ogg'
+        elif ext == 'wav':
+            mime_type = 'audio/wav'
         else:
-            mime = "audio/mp3" # Safe fallback
+            mime_type = 'audio/mp3' # Last resort fallback
 
-    print(f"Detected MIME type: {mime}")
+    print(f"Detected MIME type: {mime_type}")
 
-    # 2. Upload file
-    audio_file = genai.upload_file(audio_path, mime_type=mime)
+    # 2. Upload file with correct MIME
+    audio_file = genai.upload_file(audio_path, mime_type=mime_type)
 
-    # 3. Wait for processing
+    # 3. Wait for processing (Async)
     while audio_file.state.name == "PROCESSING":
         print(".", end="", flush=True)
         time.sleep(1)
@@ -102,7 +124,7 @@ def transcribe_with_gemini(audio_path):
 
     print("\nGenerating transcript...")
     
-    # Using your preferred model
+    # Using your preferred model (gemini-2.5-flash)
     model = genai.GenerativeModel("gemini-2.5-flash") 
 
     try:
@@ -126,7 +148,6 @@ def transcribe_with_gemini(audio_path):
     except Exception as e:
         print(f"Transcription Error: {e}")
         raise e
-
 def explain_with_gemini(transcript, title="", description=""):
     model = genai.GenerativeModel("gemini-2.5-flash")
     prompt = f"""
