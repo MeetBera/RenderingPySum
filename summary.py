@@ -34,16 +34,16 @@ def download_audio(url):
         final_cookie_path = "youtube.com_cookies.txt"
 
     ydl_opts = {
-        "quiet": True,
+        "quiet": True, 
         "no_warnings": True,
         "cookiefile": final_cookie_path,
-        "format": "bestaudio[abr<=50][asr=22050]/bestaudio[abr<=70]/bestaudio",
+        "format": "worst/bestaudio", 
+        
         "outtmpl": audio_path_template,
-        # ✅ FORCE CONVERSION TO MP3
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
-            "preferredquality": "64", # Low quality (64k) to save RAM/CPU
+            "preferredquality": "64", # This ensures the final file is small regardless of source
         }],
     }
 
