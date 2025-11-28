@@ -8,14 +8,17 @@ import re
 import google.generativeai as genai
 import yt_dlp
 import mimetypes
+import json
 
 # Configure Gemini
 def configure_gemini():
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        # On Render, this should always be set. Locally, you might need to set it manually.
-        raise ValueError("GEMINI_API_KEY environment variable not set")
-    genai.configure(api_key=api_key)
+        # Fallback for local testing if env var is missing
+        # api_key = "YOUR_API_KEY" 
+        pass
+    if api_key:
+        genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
 # UTILITY: Clean VTT (Crucial for token saving)
@@ -26,9 +29,12 @@ def clean_vtt_text(vtt_content):
     clean_lines = []
     seen = set()
     for line in lines:
-        if "WEBVTT" in line or "-->" in line or line.strip().isdigit():
+        # Remove timestamps, headers, and empty lines
+        if "WEBVTT" in line or "-->" in line or line.strip().isdigit() or not line.strip():
             continue
+        # Remove HTML-like tags
         line = re.sub(r'<[^>]+>', '', line).strip()
+        # Remove duplicates (common in auto-captions)
         if line and line not in seen:
             seen.add(line)
             clean_lines.append(line)
@@ -56,8 +62,8 @@ def get_transcript_from_subs(url):
         'writeautomaticsub': True,
         'subtitlesformat': 'vtt',
         'outtmpl': os.path.join(temp_dir, '%(id)s'), 
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': True,           # CRITICAL: Suppress output to stdout
+        'no_warnings': True,     # CRITICAL: Suppress warnings
         'cookiefile': cookie_file
     }
 
@@ -73,6 +79,12 @@ def get_transcript_from_subs(url):
         
         if potential_files:
             sub_path = potential_files[0]
+            # Prefer English if multiple exist
+            for p in potential_files:
+                if ".en" in p:
+                    sub_path = p
+                    break
+            
             print(f"✅ Found subtitles: {sub_path}", file=sys.stderr)
             
             with open(sub_path, 'r', encoding='utf-8') as f:
@@ -97,6 +109,7 @@ def get_transcript_from_subs(url):
 # ---------------------------------------------------------
 def download_audio(url):
     temp_dir = "/tmp"
+    # We remove the specific extension from the template so yt-dlp can use the real one
     audio_path_template = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
 
     # Cookie Setup
@@ -105,10 +118,9 @@ def download_audio(url):
         cookie_file = "youtube.com_cookies.txt" if os.path.exists("youtube.com_cookies.txt") else None
 
     ydl_opts = {
-        "quiet": True, 
+        "quiet": True,           # CRITICAL: Suppress output
         "no_warnings": True,
         "cookiefile": cookie_file,
-        # Optimized for speed: Smallest audio available
         "format": "worst/bestaudio", 
         "outtmpl": audio_path_template,
     }
@@ -160,13 +172,13 @@ def transcribe_with_gemini(audio_path):
     audio_file = genai.upload_file(audio_path, mime_type=mime)
 
     while audio_file.state.name == "PROCESSING":
-        time.sleep(1)
+        time.sleep(2)
         audio_file = genai.get_file(audio_file.name)
 
     if audio_file.state.name == "FAILED":
         raise ValueError("Audio processing failed by Gemini")
 
-    print("Generating transcript...", file=sys.stderr)
+    print("Generating audio transcript...", file=sys.stderr)
     model = genai.GenerativeModel("gemini-2.5-flash")
     
     try:
@@ -175,7 +187,7 @@ def transcribe_with_gemini(audio_path):
         except: pass
         return response.text
     except Exception as e:
-        print(f"Transcription Error: {e}")
+        print(f"Transcription Error: {e}", file=sys.stderr)
         raise e
 
 def explain_with_gemini(transcript, title="", description=""):
@@ -202,6 +214,63 @@ def explain_with_gemini(transcript, title="", description=""):
     """
     response = model.generate_content(prompt)
     return response.text
+
+# ---------------------------------------------------------
+# MAIN (Supports CLI execution for Node.js child_process)
+# ---------------------------------------------------------
+def main():
+    if len(sys.argv) > 1:
+        url = sys.argv[1]
+    else:
+        # If no arg, just exit or read input (but safer to exit for backend)
+        print("Error: No URL provided", file=sys.stderr)
+        return
+
+    configure_gemini()
+
+    # STRATEGY 1: FAST TRACK
+    print("🚀 Checking for subtitles...", file=sys.stderr)
+    transcript, title, desc = get_transcript_from_subs(url)
+
+    if transcript:
+        print("✅ Subtitles found! Generating summary...", file=sys.stderr)
+        summary = explain_with_gemini(transcript, title, desc)
+        
+        # IMPORTANT: Only print the final JSON to stdout
+        print(json.dumps({
+            "summary": summary, 
+            "title": title, 
+            "method": "subtitles_clean"
+        }))
+        return
+
+    # STRATEGY 2: AUDIO FALLBACK
+    print("⚠️ No subtitles found. Falling back to Audio...", file=sys.stderr)
+    audio_path, title, desc = download_audio(url)
+    
+    if not audio_path:
+        print("Error: Download failed.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        transcript = transcribe_with_gemini(audio_path)
+        summary = explain_with_gemini(transcript, title, desc)
+        
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+            
+        print(json.dumps({
+            "summary": summary, 
+            "title": title, 
+            "method": "audio_slow"
+        }))
+        
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
 
 
 
