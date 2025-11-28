@@ -85,6 +85,7 @@ def get_transcript_from_subs(url):
                     sub_path = p
                     break
             
+            # Print to stderr so Node.js ignores it
             print(f"✅ Found subtitles: {sub_path}", file=sys.stderr)
             
             with open(sub_path, 'r', encoding='utf-8') as f:
@@ -121,6 +122,7 @@ def download_audio(url):
         "quiet": True,           # CRITICAL: Suppress output
         "no_warnings": True,
         "cookiefile": cookie_file,
+        # Optimized for speed: Smallest audio available
         "format": "worst/bestaudio", 
         "outtmpl": audio_path_template,
     }
@@ -172,13 +174,13 @@ def transcribe_with_gemini(audio_path):
     audio_file = genai.upload_file(audio_path, mime_type=mime)
 
     while audio_file.state.name == "PROCESSING":
-        time.sleep(2)
+        time.sleep(1)
         audio_file = genai.get_file(audio_file.name)
 
     if audio_file.state.name == "FAILED":
         raise ValueError("Audio processing failed by Gemini")
 
-    print("Generating audio transcript...", file=sys.stderr)
+    print("Generating transcript...", file=sys.stderr)
     model = genai.GenerativeModel("gemini-2.5-flash")
     
     try:
