@@ -17,7 +17,7 @@ def configure_gemini():
     api_key = os.getenv("GEMINI_API_KEY")
     # Fallback for local testing
     if not api_key: 
-        api_key = "AIzaSyAI5YkXTUZwI5VpOTNHhgSaIiYUJ0kKZ8o"
+        api_key = ""
         
     if api_key:
         genai.configure(api_key=api_key)
