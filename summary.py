@@ -86,43 +86,47 @@ def clean_vtt_text(vtt_content):
 # CORE LOGIC: Get Transcript
 # ---------------------------------------------------------
 def get_transcript_from_subs(url):
-    """
-    Downloads subtitles with a smart priority:
-    1. Manual English -> 2. Manual Hindi -> 3. Auto-generated
-    """
-    # Define temp directory based on OS
     temp_dir = "/tmp/subs" if os.name != 'nt' else os.path.join(os.getcwd(), "temp_subs")
     
-    # Reset temp directory
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
     os.makedirs(temp_dir)
 
     cookie_file = get_cookie_file()
     
-    # 1. Fetch Metadata (Silently)
-    target_lang = 'en.*' # Default safe fallback
+    # --- ANTI-BOT CONFIGURATION ---
+    # We use 'android' client because YouTube blocks it less often than 'web'
+    base_opts = {
+        'skip_download': True,
+        'quiet': True,
+        'no_warnings': True,
+        'cookiefile': cookie_file,
+        'nocheckcertificate': True,
+        # SPOOFING: Pretend to be an Android device to bypass 429
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web'],
+                'skip': ['dash', 'hls']
+            }
+        },
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    }
+
+    target_lang = 'en.*'
     title = "Unknown"
     desc = ""
     video_id = ""
 
-    meta_opts = {
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file
-    }
-
+    # 1. Fetch Metadata
     try:
-        # Silence stdout to keep logs clean
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(meta_opts) as ydl:
+            with yt_dlp.YoutubeDL(base_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 video_id = info.get('id')
                 title = info.get('title', 'No Title')
                 desc = info.get('description', '')
                 
-                # Smart Language Selection
+                # Logic: Manual English -> Manual Hindi -> Auto
                 manual_subs = list(info.get('subtitles', {}).keys())
                 auto_subs = list(info.get('automatic_captions', {}).keys())
                 all_langs = set(manual_subs + auto_subs)
@@ -137,36 +141,34 @@ def get_transcript_from_subs(url):
                     return None, None, None
 
     except Exception as e:
-        print(f"⚠️ Metadata Error: {e}", file=sys.stderr)
+        # If metadata fetch fails, we can't proceed
+        print(f"⚠️ Metadata Error (Rate Limit suspected): {e}", file=sys.stderr)
         return None, None, None
 
-    # 2. Download Subtitles (Silently)
-    dl_opts = {
-        'skip_download': True,
+    # 2. Download Subtitles
+    # We add a small random sleep to appear human
+    time.sleep(random.uniform(0.5, 1.5))
+
+    dl_opts = base_opts.copy()
+    dl_opts.update({
         'writesubtitles': True,
         'writeautomaticsub': True,
         'subtitleslangs': [target_lang],
         'subtitlesformat': 'vtt',
-        'outtmpl': os.path.join(temp_dir, '%(id)s'), 
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file
-    }
+        'outtmpl': os.path.join(temp_dir, '%(id)s'),
+    })
 
     try:
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
             with yt_dlp.YoutubeDL(dl_opts) as ydl:
                 ydl.download([url])
 
-        # Find the file
         files = glob.glob(os.path.join(temp_dir, "*.vtt"))
         if files:
-            # Sort by size (largest usually means most complete)
             files.sort(key=os.path.getsize, reverse=True)
             with open(files[0], 'r', encoding='utf-8') as f:
                 clean_text = clean_vtt_text(f.read())
             
-            # Cleanup
             try: shutil.rmtree(temp_dir)
             except: pass
             
@@ -175,10 +177,8 @@ def get_transcript_from_subs(url):
     except Exception as e:
         print(f"⚠️ Download Error: {e}", file=sys.stderr)
 
-    # Final Cleanup
     try: shutil.rmtree(temp_dir)
     except: pass
-
     return None, None, None
 
 # ---------------------------------------------------------
