@@ -142,49 +142,6 @@ def get_transcript_from_subs(url):
     
     return None, None, None
 
-# ---------------------------------------------------------
-# STRATEGY 2: Audio Download (Slow Fallback)
-# ---------------------------------------------------------
-def download_audio(url):
-    temp_dir = "/tmp" if os.name != 'nt' else os.getcwd()
-    audio_template = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
-    cookie_file = get_cookie_file()
-
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "cookiefile": cookie_file,
-        "format": "worst/bestaudio", # Save space
-        "outtmpl": audio_template,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            video_id = info.get("id")
-            title = info.get("title", "No Title")
-            desc = info.get("description", "")
-            ext = info.get("ext")
-        
-        gc.collect() # Force memory cleanup
-        
-        final_path = os.path.join(temp_dir, f"audio_{video_id}.{ext}")
-        
-        # Double check file existence (names can vary)
-        if not os.path.exists(final_path):
-            for f in os.listdir(temp_dir):
-                if f.startswith(f"audio_{video_id}"):
-                    final_path = os.path.join(temp_dir, f)
-                    break
-        
-        if os.path.exists(final_path):
-            return final_path, title, desc
-            
-    except Exception as e:
-        print(f"❌ Audio Download Error: {e}", file=sys.stderr)
-        
-    return None, None, None
-
 def explain_with_gemini(transcript, title="", description=""):
     model = genai.GenerativeModel("gemini-2.5-flash") # Or 1.5-pro
     safe_transcript = transcript[:30000] # Token safety
@@ -231,23 +188,8 @@ def main():
     print("🚀 Strategy 1: Subtitles...", file=sys.stderr)
     transcript, title, desc = get_transcript_from_subs(url)
     method = "subtitles_clean"
-
-    # 2. Try Audio if Subtitles fail
-    if not transcript:
-        print("⚠️ Subtitles failed. Strategy 2: Audio Download...", file=sys.stderr)
-        audio_path, title, desc = download_audio(url)
-        
-        if audio_path:
-            try:
-                transcript = transcribe_with_gemini(audio_path)
-                method = "audio_slow"
-            except Exception as e:
-                print(f"❌ Transcription failed: {e}", file=sys.stderr)
-            finally:
-                if os.path.exists(audio_path):
-                    os.remove(audio_path)
-
-    # 3. Generate Summary
+    
+    # 2. Generate Summary
     if transcript:
         print("✅ Transcript acquired. Generating summary...", file=sys.stderr)
         try:
