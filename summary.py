@@ -72,13 +72,19 @@ def get_transcript_from_subs(url):
         cookie_file = "/tmp/youtube_cookies.txt"
 
     ydl_opts = {
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-        "cookiefile": cookie_file,
-        "extract_flat": False,
-        "forcejson": True,
+    "skip_download": True,
+    "quiet": True,
+    "no_warnings": True,
+    "cookiefile": cookie_file,
+    "extract_flat": False,
+    "forcejson": True,
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android"]
+            }
+        }
     }
+
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
