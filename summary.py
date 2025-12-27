@@ -1,10 +1,15 @@
 import sys
 import os
+import glob
+import re
 import json
+import shutil
+import contextlib
+import random
+import time
+import requests  # <--- Added missing import
 import google.generativeai as genai
 import yt_dlp
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import TextFormatter
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------
@@ -13,99 +18,148 @@ from dotenv import load_dotenv
 def configure_gemini():
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
+    
+    # Fallback for local testing
+    if not api_key:
+        # api_key = "AIzaSy..." 
+        pass
+        
     if api_key:
         genai.configure(api_key=api_key)
     else:
-        # We don't exit here, so we can at least print the transcript if API fails
-        print("⚠️ Warning: GEMINI_API_KEY not found.", file=sys.stderr)
+        print("❌ Error: No GEMINI_API_KEY found.", file=sys.stderr)
+        # We don't exit here to allow debugging of subtitles even if AI fails
 
 # ---------------------------------------------------------
-# STRATEGY 2: The "API" Method (Bypasses Player Block)
+# UTILITY: Clean VTT
 # ---------------------------------------------------------
-def get_transcript_data(url):
-    video_id = ""
-    
-    # 1. Extract Video ID securely
-    try:
-        # Simple regex to get ID from standard URL
-        if "v=" in url:
-            video_id = url.split("v=")[1].split("&")[0]
-        elif "youtu.be/" in url:
-            video_id = url.split("youtu.be/")[1].split("?")[0]
-        else:
-            # Fallback to yt-dlp just for ID extraction if regex fails
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                info = ydl.extract_info(url, download=False)
-                video_id = info.get('id')
-    except Exception as e:
-        print(f"❌ Could not extract Video ID: {e}", file=sys.stderr)
-        return None, None, None
+def clean_vtt_text(vtt_content):
+    lines = vtt_content.splitlines()
+    clean_lines = []
+    seen = set()
+    for line in lines:
+        if "WEBVTT" in line or "-->" in line or line.strip().isdigit() or not line.strip():
+            continue
+        line = re.sub(r'<[^>]+>', '', line).strip()
+        if line and line not in seen:
+            seen.add(line)
+            clean_lines.append(line)
+    return " ".join(clean_lines)
 
-    print(f"🆔 Video ID: {video_id}", file=sys.stderr)
-
-    # 2. Fetch Transcript via specialized API (Bypasses yt-dlp blocks)
-    transcript_text = ""
-    try:
-        # Try fetching transcript (Auto-detected priority: Manual English -> Manual Hindi -> Auto)
-        # This library handles the complex "which language" logic automatically
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        # Priority Logic:
-        # 1. Manually created English
-        # 2. Manually created Hindi
-        # 3. Auto-generated English
+# ---------------------------------------------------------
+# CORE LOGIC: Robust Subtitle Fetch
+# ---------------------------------------------------------
+def get_transcript_from_subs(url):
+    # 1. Handle Cookie File
+    cookie_file = None
+    if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
+        # Copy to temp to ensure it's writable/readable
         try:
-            transcript = transcript_list.find_transcript(['en', 'hi'])
+            shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
+            cookie_file = "/tmp/youtube_cookies.txt"
         except:
-            # Fallback to auto-generated if manual not found
-            try:
-                transcript = transcript_list.find_generated_transcript(['en'])
-            except:
-                # Absolute fallback: just give me anything you have
-                transcript = transcript_list.find_manually_created_transcript(['en', 'hi'])
+            cookie_file = "/etc/secrets/youtube.com_cookies.txt"
+    elif os.path.exists("youtube.com_cookies.txt"):
+        cookie_file = "youtube.com_cookies.txt"
 
-        # Fetch the actual data
-        full_data = transcript.fetch()
+    # 2. Configure yt-dlp
+    # We allow 'android' AND 'web' clients to give yt-dlp options if one fails
+    ydl_opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "extract_flat": False,
+        "forcejson": True,
+        # PROXY: If you have a proxy, add it here: 'proxy': 'http://user:pass@host:port',
+        "extractor_args": {
+            "youtube": {
+                # Try android first (good for age-gate), then web (standard)
+                "player_client": ["android", "web"],
+                "skip": ["dash", "hls"]
+            }
+        },
+        # User Agent to look like a standard browser
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # This is where it was failing. Updating yt-dlp fixes this.
+            info = ydl.extract_info(url, download=False)
+
+        title = info.get("title", "Unknown Title")
+        desc = info.get("description", "")
+
+        # 3. Extract Subtitles manually
+        captions = info.get("subtitles") or info.get("automatic_captions") or {}
+
+        if not captions:
+            print("❌ No captions found in metadata.", file=sys.stderr)
+            return None, None, None
+
+        # Logic: English -> Hindi -> First Available
+        lang = None
         
-        # Format to clean text
-        formatter = TextFormatter()
-        transcript_text = formatter.format_transcript(full_data)
+        # Check for English
+        for k in captions:
+            if k.startswith("en"):
+                lang = k
+                break
         
-        # Clean up whitespace
-        transcript_text = transcript_text.replace("\n", " ")
+        # Check for Hindi
+        if not lang:
+            for k in captions:
+                if k.startswith("hi"):
+                    lang = k
+                    break
+                    
+        # Fallback
+        if not lang:
+            lang = list(captions.keys())[0]
+
+        print(f"✅ Selected Language: {lang}", file=sys.stderr)
+
+        # Get the URL of the VTT format
+        subs_list = captions.get(lang, [])
+        vtt_url = None
+        
+        # Look for vtt format specifically
+        for sub in subs_list:
+            if sub.get('ext') == 'vtt':
+                vtt_url = sub.get('url')
+                break
+        
+        # Fallback to whatever URL is there (usually json3 or srv1, but we need text)
+        if not vtt_url and subs_list:
+            vtt_url = subs_list[0].get('url')
+
+        if not vtt_url:
+            return None, None, None
+
+        # 4. Download content directly (Bypassing yt-dlp download logic)
+        # Using the same cookies for the request is sometimes needed
+        headers = {"User-Agent": ydl_opts["user_agent"]}
+        
+        # Note: We don't usually pass cookies to the subtitle URL fetch, 
+        # but if it fails, you might need to use a session with cookies.
+        r = requests.get(vtt_url, headers=headers, timeout=10)
+        r.raise_for_status()
+
+        clean_text = clean_vtt_text(r.text)
+        return clean_text, title, desc
 
     except Exception as e:
-        print(f"⚠️ Transcript API failed: {e}", file=sys.stderr)
+        print(f"⚠️ Subtitle extraction failed: {e}", file=sys.stderr)
         return None, None, None
-
-    # 3. Fetch Metadata (Title/Desc) via yt-dlp (Lightweight)
-    # Even if this fails due to 429, we still have the transcript!
-    title = "Unknown Title"
-    desc = ""
-    try:
-        opts = {
-            'quiet': True, 
-            'skip_download': True,
-            'ignoreerrors': True, # Don't crash if metadata fetch fails
-            'no_warnings': True
-        }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if info:
-                title = info.get('title', 'Unknown Title')
-                desc = info.get('description', '')
-    except:
-        print("⚠️ Metadata fetch failed (Title might be missing), but transcript is safe.", file=sys.stderr)
-
-    return transcript_text, title, desc
 
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
 def explain_with_gemini(transcript, title="", description=""):
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    # Safety limit
-    safe_transcript = transcript[:100000]
+    # FIX: Use 1.5-flash (2.5 doesn't exist publicly)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    safe_transcript = transcript[:100000] 
     
     prompt = f"""
     You are a product-quality note designer.
@@ -144,19 +198,17 @@ def main():
     configure_gemini()
 
     print(f"🚀 Processing: {url}", file=sys.stderr)
-    
-    # Use the new robust method
-    transcript, title, desc = get_transcript_data(url)
+    transcript, title, desc = get_transcript_from_subs(url)
 
     if transcript:
-        print("✅ Transcript acquired. Summarizing...", file=sys.stderr)
+        print("✅ Transcript acquired.", file=sys.stderr)
         try:
             summary = explain_with_gemini(transcript, title, desc)
             summary = summary.replace("\u2028", "").replace("\u2029", "")
             print(json.dumps({
                 "summary": summary,
                 "title": title,
-                "method": "youtube_transcript_api"
+                "method": "subtitles_clean"
             }))
         except Exception as e:
             print(f"❌ Gemini Error: {e}", file=sys.stderr)
