@@ -1,8 +1,9 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # Optional: logic to allow frontend requests
 import os
 import sys
 
-# Import functions from your fixed summary.py
+# Import functions from your summary.py
 from summary import (
     configure_gemini,
     get_transcript_from_subs,
@@ -10,23 +11,32 @@ from summary import (
 )
 
 app = Flask(__name__)
+# Enable CORS for all routes (Crucial if your frontend is on a different domain/port)
+CORS(app)
 
 # --- Safe Startup Configuration ---
+# We configure Gemini once when the app starts
 try:
     configure_gemini()
     print("✅ Gemini Configured Successfully", file=sys.stderr)
 except Exception as e:
     print(f"❌ Gemini Configuration Failed: {e}", file=sys.stderr)
+    # We don't exit here so the server can still start and report health
 
 @app.route("/")
 def home():
-    return jsonify({"status": "running", "message": "Video Summary API Ready"})
+    """Health Check Route"""
+    return jsonify({
+        "status": "running", 
+        "message": "Video Summary API Ready",
+        "service": "Render"
+    })
 
 @app.route("/summarize", methods=["POST"])
 def summarize_video():
     data = request.get_json()
     
-    # Validation
+    # 1. Validation
     if not data or "url" not in data:
         return jsonify({"error": "URL required"}), 400
 
@@ -37,14 +47,17 @@ def summarize_video():
         # STRATEGY 1: FAST TRACK (Subtitles)
         # ---------------------------------------------------------
         print(f"🚀 Processing URL: {url}", file=sys.stderr)
+        
+        # Call the function from summary.py
         transcript, title, description = get_transcript_from_subs(url)
 
         if transcript:
-            print("✅ Subtitles found! Generating summary...", file=sys.stderr)
+            print("✅ Subtitles found! Generating AI summary...", file=sys.stderr)
             
             # Generate Summary from Text
             summary = explain_with_gemini(transcript, title, description)
             
+            # Successful Response
             return jsonify({
                 "summary": summary,
                 "title": title,
@@ -53,15 +66,12 @@ def summarize_video():
             })
         
         # ---------------------------------------------------------
-        # STRATEGY 2: FALLBACK (Audio)
+        # STRATEGY 2: FALLBACK (Currently Disabled)
         # ---------------------------------------------------------
-        # Note: Since we removed audio logic from summary.py to keep it simple/fast,
-        # we return an error here. If you add audio download back later, 
-        # place that logic here.
         else:
-            print("⚠️ No subtitles found. Audio fallback is currently disabled.", file=sys.stderr)
+            print("⚠️ No subtitles found. Audio fallback is disabled.", file=sys.stderr)
             return jsonify({
-                "error": "Could not find subtitles for this video. Audio processing is disabled."
+                "error": "Could not find subtitles for this video. Please ensure the video has captions."
             }), 422
 
     except Exception as e:
@@ -69,6 +79,9 @@ def summarize_video():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Render provides the PORT env var
+    # Render automatically sets the 'PORT' environment variable.
+    # We must listen on 0.0.0.0 to be accessible externally.
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+
