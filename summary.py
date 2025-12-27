@@ -143,7 +143,7 @@ def get_transcript_from_subs(url):
     return None, None, None
 
 def explain_with_gemini(transcript, title="", description=""):
-    model = genai.GenerativeModel("gemini-2.5-flash") # Or 1.5-pro
+    model = genai.GenerativeModel("gemini-2.5-flash-lite") # Or 1.5-pro
     safe_transcript = transcript[:30000] # Token safety
     
     prompt = f"""
