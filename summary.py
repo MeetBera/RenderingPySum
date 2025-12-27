@@ -5,210 +5,218 @@ import re
 import json
 import shutil
 import contextlib
+import random
+import time
 import google.generativeai as genai
 import yt_dlp
 
-# =========================================================
-# RENDER CONFIGURATION
-# =========================================================
-
-TMP_DIR = "/tmp"
-COOKIE_SECRET_PATH = "/etc/secrets/youtube.com_cookies.txt"
-
-
+# ---------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------
 def configure_gemini():
-    api_key = os.environ.get("GEMINI_API_KEY")
-
-    if not api_key:
-        print("❌ GEMINI_API_KEY not set in Render environment.", file=sys.stderr)
+    api_key = os.getenv("GEMINI_API_KEY")
+    # Fallback for local testing
+    if not api_key: 
+        api_key = "AIzaSyAI5YkXTUZwI5VpOTNHhgSaIiYUJ0kKZ8o"
+        
+    if api_key:
+        genai.configure(api_key=api_key)
+    else:
+        print("❌ Error: No GEMINI_API_KEY found.", file=sys.stderr)
         sys.exit(1)
 
-    genai.configure(api_key=api_key)
-
-
+# ---------------------------------------------------------
+# COOKIE HANDLING
+# ---------------------------------------------------------
 def get_cookie_file():
-    """
-    Render only:
-    - Secrets are mounted at /etc/secrets
-    - Copy to /tmp because /etc is read-only
-    """
-    if os.path.exists(COOKIE_SECRET_PATH):
-        local_cookie = os.path.join(TMP_DIR, "youtube_cookies.txt")
+    secret_cookie = "/etc/secrets/youtube.com_cookies.txt"
+    local_cookie = "/tmp/youtube_cookies.txt"
+
+    # 1. Render: Copy Secret -> Tmp
+    if os.path.exists(secret_cookie):
         try:
-            shutil.copy(COOKIE_SECRET_PATH, local_cookie)
+            shutil.copy(secret_cookie, local_cookie)
             return local_cookie
-        except Exception as e:
-            print(f"⚠️ Cookie copy failed: {e}", file=sys.stderr)
-            return None
+        except:
+            return secret_cookie
+
+    # 2. Local File
+    if os.path.exists("youtube.com_cookies.txt"):
+        return "youtube.com_cookies.txt"
 
     return None
 
-
-# =========================================================
-# UTILITY: CLEAN VTT (Token Optimization)
-# =========================================================
-
+# ---------------------------------------------------------
+# UTILITY: Clean VTT
+# ---------------------------------------------------------
 def clean_vtt_text(vtt_content):
     lines = vtt_content.splitlines()
     clean_lines = []
     seen = set()
-
     for line in lines:
-        if (
-            "WEBVTT" in line
-            or "-->" in line
-            or line.strip().isdigit()
-            or not line.strip()
-        ):
+        if "WEBVTT" in line or "-->" in line or line.strip().isdigit() or not line.strip():
             continue
-
-        line = re.sub(r"<[^>]+>", "", line).strip()
-
+        line = re.sub(r'<[^>]+>', '', line).strip()
         if line and line not in seen:
             seen.add(line)
             clean_lines.append(line)
-
     return " ".join(clean_lines)
 
-
-# =========================================================
-# SUBTITLE EXTRACTION (Render-Safe)
-# =========================================================
-
-def get_transcript_from_subs(url):
-    os.makedirs(TMP_DIR, exist_ok=True)
-
-    for f in glob.glob(os.path.join(TMP_DIR, "*.vtt")):
-        try:
-            os.remove(f)
-        except:
-            pass
-
-    cookie_file = get_cookie_file()
-
-    meta_opts = {
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-        "cookiefile": cookie_file,
-    }
-
-    target_lang = "en.*"
-
-    try:
-        with contextlib.redirect_stdout(open(os.devnull, "w")):
-            with yt_dlp.YoutubeDL(meta_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-
-        video_id = info["id"]
-        title = info.get("title", "")
-        desc = info.get("description", "")
-
-        manual = info.get("subtitles", {}).keys()
-        auto = info.get("automatic_captions", {}).keys()
-        all_langs = set(manual) | set(auto)
-
-        if any(l.startswith("en") for l in all_langs):
-            target_lang = "en.*"
-        elif any(l.startswith("hi") for l in all_langs):
-            target_lang = "hi.*"
-        elif auto:
-            target_lang = list(auto)[0]
-        else:
-            return None, None, None
-
-    except Exception as e:
-        print(f"❌ Metadata fetch failed: {e}", file=sys.stderr)
-        return None, None, None
+# ---------------------------------------------------------
+# CORE LOGIC: Robust Subtitle Fetch
+# ---------------------------------------------------------
+def download_subs_attempt(url, temp_dir, cookie_file=None):
+    """
+    Helper function to attempt download with specific options
+    """
+    # Random User Agent to look less robotic
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0'
+    ]
 
     opts = {
-        "skip_download": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitleslangs": [target_lang],
-        "subtitlesformat": "vtt",
-        "outtmpl": os.path.join(TMP_DIR, "%(id)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "cookiefile": cookie_file,
+        'skip_download': True,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        # Try English -> Hindi -> Auto
+        'subtitleslangs': ['en.*', 'hi.*', 'orig'], 
+        'subtitlesformat': 'vtt',
+        'outtmpl': os.path.join(temp_dir, '%(id)s'),
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'source_address': '0.0.0.0', # Force IPv4
+        'user_agent': random.choice(user_agents),
     }
 
-    try:
-        with contextlib.redirect_stdout(open(os.devnull, "w")):
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
+    if cookie_file:
+        opts['cookiefile'] = cookie_file
 
-        files = glob.glob(os.path.join(TMP_DIR, f"{video_id}*.vtt"))
-        if not files:
+    try:
+        # Silence output to prevent JSON corruption
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return info.get('title', 'Unknown'), info.get('description', '')
+    except Exception as e:
+        # Raise error to trigger the fallback retry
+        raise e
+
+def get_transcript_from_subs(url):
+    temp_dir = "/tmp/subs" if os.name != 'nt' else "temp_subs"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+    os.makedirs(temp_dir)
+
+    cookie_file = get_cookie_file()
+    title = "Unknown"
+    desc = ""
+    success = False
+
+    # --- ATTEMPT 1: WITH COOKIES ---
+    if cookie_file:
+        try:
+            print("🍪 Attempt 1: Using Cookies...", file=sys.stderr)
+            title, desc = download_subs_attempt(url, temp_dir, cookie_file)
+            success = True
+        except Exception as e:
+            print(f"⚠️ Attempt 1 Failed (Likely 429): {e}", file=sys.stderr)
+
+    # --- ATTEMPT 2: NO COOKIES (Fallback) ---
+    # Sometimes cookies are the cause of the flag. Try anonymous.
+    if not success:
+        try:
+            print("🕵️ Attempt 2: Anonymous (No Cookies)...", file=sys.stderr)
+            # Add a small delay to reset connection
+            time.sleep(2) 
+            title, desc = download_subs_attempt(url, temp_dir, cookie_file=None)
+            success = True
+        except Exception as e:
+            print(f"❌ Attempt 2 Failed: {e}", file=sys.stderr)
             return None, None, None
 
-        with open(files[0], "r", encoding="utf-8") as f:
-            raw = f.read()
+    # --- PROCESS FILES ---
+    if success:
+        files = glob.glob(os.path.join(temp_dir, "*.vtt"))
+        if files:
+            files.sort(key=os.path.getsize, reverse=True)
+            with open(files[0], 'r', encoding='utf-8') as f:
+                clean_text = clean_vtt_text(f.read())
+            
+            try: shutil.rmtree(temp_dir)
+            except: pass
+            
+            return clean_text, title, desc
+    
+    try: shutil.rmtree(temp_dir)
+    except: pass
+    return None, None, None
 
-        return clean_vtt_text(raw), title, desc
-
-    except Exception as e:
-        print(f"❌ Subtitle download failed: {e}", file=sys.stderr)
-        return None, None, None
-
-
-# =========================================================
+# ---------------------------------------------------------
 # GEMINI SUMMARIZATION
-# =========================================================
-
+# ---------------------------------------------------------
 def explain_with_gemini(transcript, title="", description=""):
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
-    safe_text = transcript[:30000]
-
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    safe_transcript = transcript[:100000] 
+    
     prompt = f"""
-You are a product-quality note designer.
+    You are a product-quality note designer.
+    Turn this video transcript into **beautiful, human-friendly notes**.
 
-Create clean, human-friendly notes.
+    METADATA:
+    Title: {title}
+    Description: {description[:500]}
 
-Rules:
-- **Bold** for key ideas
-- *Italic* for clarity
-- No heavy markdown
-- No code blocks
+    TRANSCRIPT:
+    {safe_transcript}
 
-Title: {title}
+    OUTPUT FORMAT:
+    ## Summary
+    (Concise overview)
 
-Transcript:
-{safe_text}
-"""
+    ## Key Points
+    - (Bulleted list)
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        raise Exception(f"Gemini API Error: {str(e)}")
 
-    response = model.generate_content(prompt)
-    return response.text
-
-
-# =========================================================
-# ENTRYPOINT
-# =========================================================
-
+# ---------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------
 def main():
     if len(sys.argv) < 2:
-        print("❌ No URL provided", file=sys.stderr)
-        sys.exit(1)
+        print(json.dumps({"error": "No URL provided"}), file=sys.stderr)
+        return
 
     url = sys.argv[1]
-
     configure_gemini()
 
+    print(f"🚀 Processing: {url}", file=sys.stderr)
     transcript, title, desc = get_transcript_from_subs(url)
 
-    if not transcript:
-        print("❌ No subtitles found", file=sys.stderr)
+    if transcript:
+        print("✅ Transcript acquired.", file=sys.stderr)
+        try:
+            summary = explain_with_gemini(transcript, title, desc)
+            summary = summary.replace("\u2028", "").replace("\u2029", "")
+            print(json.dumps({
+                "summary": summary,
+                "title": title,
+                "method": "subtitles_clean"
+            }))
+        except Exception as e:
+            print(f"❌ Gemini Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Don't show "429" to the user, just say no captions found
+        print("❌ FATAL: Could not retrieve subtitles (Block or No Captions).", file=sys.stderr)
         sys.exit(1)
-
-    summary = explain_with_gemini(transcript, title, desc)
-
-    print(json.dumps({
-        "summary": summary,
-        "title": title,
-        "method": "render_subtitles"
-    }))
-
 
 if __name__ == "__main__":
     main()
