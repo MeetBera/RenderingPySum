@@ -66,103 +66,66 @@ def clean_vtt_text(vtt_content):
 # CORE LOGIC: Robust Subtitle Fetch
 # ---------------------------------------------------------
 def get_transcript_from_subs(url):
-    # 1. Setup Temp Directory (Render Safe)
-    temp_dir = "/tmp/subs" if os.name != 'nt' else os.path.join(os.getcwd(), "temp_subs")
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
-    os.makedirs(temp_dir)
-
-    # 2. Resolve Cookie File (Render Read-Only Fix)
     cookie_file = None
-    
-    # Check Render Secret Path
     if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
-        try:
-            # Copy to writable temp to avoid lock issues
-            shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
-            cookie_file = "/tmp/youtube_cookies.txt"
-            print("🍪 Cookies loaded from Render secrets.", file=sys.stderr)
-        except:
-            cookie_file = "/etc/secrets/youtube.com_cookies.txt"
-            
-    # Check Local Path
-    elif os.path.exists("youtube.com_cookies.txt"):
-        cookie_file = "youtube.com_cookies.txt"
-        print("🍪 Cookies loaded from local file.", file=sys.stderr)
+        shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
+        cookie_file = "/tmp/youtube_cookies.txt"
 
-    # 3. User Agent Rotation (CRITICAL FOR RENDER 429 ERRORS)
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    ]
-
-    # 4. Configure yt-dlp
-    opts = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': ['en.*', 'hi.*', 'orig'], 
-        'subtitlesformat': 'vtt',
-        'outtmpl': os.path.join(temp_dir, '%(id)s'), 
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file,
-        'user_agent': random.choice(user_agents), # Rotate UA to look human
-        'sleep_interval': 1, # Add small sleep to be gentle
+    ydl_opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "extract_flat": False,
+        "forcejson": True,
     }
 
-    # 5. Execute Download
-    title = "Unknown"
-    desc = ""
-    video_id = ""
-
     try:
-        # Step A: Get Metadata
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                video_id = info.get('id')
-                title = info.get('title', 'No Title')
-                desc = info.get('description', '')
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
 
-                # Smart Language Filter
-                manual_subs = list(info.get('subtitles', {}).keys())
-                auto_subs = list(info.get('automatic_captions', {}).keys())
-                all_langs = set(manual_subs + auto_subs)
-                
-                # Update preferred language based on availability
-                if any(l.startswith('en') for l in all_langs):
-                    opts['subtitleslangs'] = ['en.*']
-                elif any(l.startswith('hi') for l in all_langs):
-                    opts['subtitleslangs'] = ['hi.*']
-                elif auto_subs:
-                    opts['subtitleslangs'] = [auto_subs[0]]
+        title = info.get("title", "")
+        desc = info.get("description", "")
 
-        # Step B: Download
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
+        captions = (
+            info.get("subtitles")
+            or info.get("automatic_captions")
+            or {}
+        )
 
-        # Step C: Read File
-        files = glob.glob(os.path.join(temp_dir, "*.vtt"))
-        if files:
-            files.sort(key=os.path.getsize, reverse=True)
-            with open(files[0], 'r', encoding='utf-8') as f:
-                clean_text = clean_vtt_text(f.read())
-            
-            try: shutil.rmtree(temp_dir)
-            except: pass
-            
-            return clean_text, title, desc
+        # Prefer English, then Hindi, then anything
+        lang = None
+        for k in captions:
+            if k.startswith("en"):
+                lang = k
+                break
+        if not lang:
+            for k in captions:
+                if k.startswith("hi"):
+                    lang = k
+                    break
+        if not lang and captions:
+            lang = list(captions.keys())[0]
+
+        if not lang:
+            return None, None, None
+
+        # Get first VTT URL (NO DOWNLOAD)
+        sub_url = captions[lang][0]["url"]
+
+        # Fetch captions manually (no yt-dlp subtitle downloader)
+        import requests
+        r = requests.get(sub_url, timeout=10)
+        r.raise_for_status()
+
+        clean_text = clean_vtt_text(r.text)
+        return clean_text, title, desc
 
     except Exception as e:
-        print(f"⚠️ Error: {e}", file=sys.stderr)
+        print(f"⚠️ Subtitle extraction failed: {e}", file=sys.stderr)
+        return None, None, None
 
-    # Cleanup
-    try: shutil.rmtree(temp_dir)
-    except: pass
-    return None, None, None
+
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
