@@ -6,3 +6,4 @@ vosk
 ffmpeg-python
 google-generativeai
 yt-dlp>=2025.01.26
+youtube-transcript-api
