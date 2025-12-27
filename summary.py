@@ -65,48 +65,6 @@ def clean_vtt_text(vtt_content):
 # ---------------------------------------------------------
 # CORE LOGIC: Robust Subtitle Fetch
 # ---------------------------------------------------------
-def download_subs_attempt(url, temp_dir, cookie_file=None):
-    """
-    Helper function to attempt download with specific options
-    """
-    # Random User Agent to look less robotic
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0'
-    ]
-
-    opts = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        # Try English -> Hindi -> Auto
-        'subtitleslangs': ['en.*', 'hi.*', 'orig'], 
-        'subtitlesformat': 'vtt',
-        'outtmpl': os.path.join(temp_dir, '%(id)s'),
-        'quiet': True,
-        'no_warnings': True,
-        'nocheckcertificate': True,
-        'source_address': '0.0.0.0', # Force IPv4
-        'user_agent': random.choice(user_agents),
-    }
-
-    if cookie_file:
-        opts['cookiefile'] = cookie_file
-
-    try:
-        # Silence output to prevent JSON corruption
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return info.get('title', 'Unknown'), info.get('description', '')
-    except Exception as e:
-        # Raise error to trigger the fallback retry
-        raise e
-
-# ---------------------------------------------------------
-# SMART TRACK: Download Dynamic Subtitles
-# ---------------------------------------------------------
 def get_transcript_from_subs(url):
     # 1. Setup Temp Directory (Render Safe)
     temp_dir = "/tmp/subs" if os.name != 'nt' else os.path.join(os.getcwd(), "temp_subs")
@@ -116,99 +74,77 @@ def get_transcript_from_subs(url):
 
     # 2. Resolve Cookie File (Render Read-Only Fix)
     cookie_file = None
+    
+    # Check Render Secret Path
     if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
         try:
-            # Copy to writable temp to avoid permission issues
+            # Copy to writable temp to avoid lock issues
             shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
             cookie_file = "/tmp/youtube_cookies.txt"
             print("🍪 Cookies loaded from Render secrets.", file=sys.stderr)
         except:
             cookie_file = "/etc/secrets/youtube.com_cookies.txt"
+            
+    # Check Local Path
     elif os.path.exists("youtube.com_cookies.txt"):
         cookie_file = "youtube.com_cookies.txt"
         print("🍪 Cookies loaded from local file.", file=sys.stderr)
 
-    # 3. Internal Helper: The logic from your local code
-    def run_downloader(use_cookie_file):
-        # A. Fetch Metadata
-        meta_opts = {
-            'skip_download': True,
-            'quiet': True,
-            'no_warnings': True,
-            'cookiefile': use_cookie_file
-        }
-        
-        target_lang = 'en.*'
-        video_id = None
-        title = "Unknown"
-        desc = ""
+    # 3. User Agent Rotation (CRITICAL FOR RENDER 429 ERRORS)
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ]
 
-        # Redirect stdout to prevent JSON errors
+    # 4. Configure yt-dlp
+    opts = {
+        'skip_download': True,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': ['en.*', 'hi.*', 'orig'], 
+        'subtitlesformat': 'vtt',
+        'outtmpl': os.path.join(temp_dir, '%(id)s'), 
+        'quiet': True,
+        'no_warnings': True,
+        'cookiefile': cookie_file,
+        'user_agent': random.choice(user_agents), # Rotate UA to look human
+        'sleep_interval': 1, # Add small sleep to be gentle
+    }
+
+    # 5. Execute Download
+    title = "Unknown"
+    desc = ""
+    video_id = ""
+
+    try:
+        # Step A: Get Metadata
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(meta_opts) as ydl:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 video_id = info.get('id')
                 title = info.get('title', 'No Title')
                 desc = info.get('description', '')
-                
-                # Smart Language Selection
+
+                # Smart Language Filter
                 manual_subs = list(info.get('subtitles', {}).keys())
                 auto_subs = list(info.get('automatic_captions', {}).keys())
                 all_langs = set(manual_subs + auto_subs)
+                
+                # Update preferred language based on availability
+                if any(l.startswith('en') for l in all_langs):
+                    opts['subtitleslangs'] = ['en.*']
+                elif any(l.startswith('hi') for l in all_langs):
+                    opts['subtitleslangs'] = ['hi.*']
+                elif auto_subs:
+                    opts['subtitleslangs'] = [auto_subs[0]]
 
-                if any(l.startswith('en') for l in all_langs): target_lang = 'en.*'
-                elif any(l.startswith('hi') for l in all_langs): target_lang = 'hi.*'
-                elif auto_subs: target_lang = auto_subs[0]
-                else: raise Exception("No subtitles found")
-
-        # B. Download Subtitles
-        dl_opts = {
-            'skip_download': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': [target_lang],
-            'subtitlesformat': 'vtt',
-            'outtmpl': os.path.join(temp_dir, '%(id)s'), 
-            'quiet': True,
-            'no_warnings': True,
-            'cookiefile': use_cookie_file
-        }
-
+        # Step B: Download
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(dl_opts) as ydl:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
-        
-        return video_id, title, desc
 
-    # 4. EXECUTION STRATEGY: Retry Logic
-    # Attempt 1: Try with Cookies (if they exist)
-    success = False
-    title, desc = "Unknown", ""
-
-    if cookie_file:
-        try:
-            print("🍪 Attempt 1: Using Cookies...", file=sys.stderr)
-            _, title, desc = run_downloader(cookie_file)
-            success = True
-        except Exception as e:
-            print(f"⚠️ Attempt 1 Failed (Likely 429): {e}", file=sys.stderr)
-            import time
-            time.sleep(2) # Cooldown
-
-    # Attempt 2: Try Anonymous (Fallback)
-    if not success:
-        try:
-            print("🕵️ Attempt 2: Anonymous (No Cookies)...", file=sys.stderr)
-            _, title, desc = run_downloader(None) # Pass None for cookiefile
-            success = True
-        except Exception as e:
-            print(f"❌ Attempt 2 Failed: {e}", file=sys.stderr)
-            try: shutil.rmtree(temp_dir)
-            except: pass
-            return None, None, None
-
-    # 5. Process Files
-    if success:
+        # Step C: Read File
         files = glob.glob(os.path.join(temp_dir, "*.vtt"))
         if files:
             files.sort(key=os.path.getsize, reverse=True)
@@ -217,8 +153,13 @@ def get_transcript_from_subs(url):
             
             try: shutil.rmtree(temp_dir)
             except: pass
+            
             return clean_text, title, desc
 
+    except Exception as e:
+        print(f"⚠️ Error: {e}", file=sys.stderr)
+
+    # Cleanup
     try: shutil.rmtree(temp_dir)
     except: pass
     return None, None, None
