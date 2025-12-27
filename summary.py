@@ -104,40 +104,110 @@ def download_subs_attempt(url, temp_dir, cookie_file=None):
         # Raise error to trigger the fallback retry
         raise e
 
+# ---------------------------------------------------------
+# SMART TRACK: Download Dynamic Subtitles
+# ---------------------------------------------------------
 def get_transcript_from_subs(url):
-    temp_dir = "/tmp/subs" if os.name != 'nt' else "temp_subs"
+    # 1. Setup Temp Directory (Render Safe)
+    temp_dir = "/tmp/subs" if os.name != 'nt' else os.path.join(os.getcwd(), "temp_subs")
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
     os.makedirs(temp_dir)
 
-    cookie_file = get_cookie_file()
-    title = "Unknown"
-    desc = ""
-    success = False
+    # 2. Resolve Cookie File (Render Read-Only Fix)
+    cookie_file = None
+    if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
+        try:
+            # Copy to writable temp to avoid permission issues
+            shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
+            cookie_file = "/tmp/youtube_cookies.txt"
+            print("🍪 Cookies loaded from Render secrets.", file=sys.stderr)
+        except:
+            cookie_file = "/etc/secrets/youtube.com_cookies.txt"
+    elif os.path.exists("youtube.com_cookies.txt"):
+        cookie_file = "youtube.com_cookies.txt"
+        print("🍪 Cookies loaded from local file.", file=sys.stderr)
 
-    # --- ATTEMPT 1: WITH COOKIES ---
+    # 3. Internal Helper: The logic from your local code
+    def run_downloader(use_cookie_file):
+        # A. Fetch Metadata
+        meta_opts = {
+            'skip_download': True,
+            'quiet': True,
+            'no_warnings': True,
+            'cookiefile': use_cookie_file
+        }
+        
+        target_lang = 'en.*'
+        video_id = None
+        title = "Unknown"
+        desc = ""
+
+        # Redirect stdout to prevent JSON errors
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            with yt_dlp.YoutubeDL(meta_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                video_id = info.get('id')
+                title = info.get('title', 'No Title')
+                desc = info.get('description', '')
+                
+                # Smart Language Selection
+                manual_subs = list(info.get('subtitles', {}).keys())
+                auto_subs = list(info.get('automatic_captions', {}).keys())
+                all_langs = set(manual_subs + auto_subs)
+
+                if any(l.startswith('en') for l in all_langs): target_lang = 'en.*'
+                elif any(l.startswith('hi') for l in all_langs): target_lang = 'hi.*'
+                elif auto_subs: target_lang = auto_subs[0]
+                else: raise Exception("No subtitles found")
+
+        # B. Download Subtitles
+        dl_opts = {
+            'skip_download': True,
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': [target_lang],
+            'subtitlesformat': 'vtt',
+            'outtmpl': os.path.join(temp_dir, '%(id)s'), 
+            'quiet': True,
+            'no_warnings': True,
+            'cookiefile': use_cookie_file
+        }
+
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            with yt_dlp.YoutubeDL(dl_opts) as ydl:
+                ydl.download([url])
+        
+        return video_id, title, desc
+
+    # 4. EXECUTION STRATEGY: Retry Logic
+    # Attempt 1: Try with Cookies (if they exist)
+    success = False
+    title, desc = "Unknown", ""
+
     if cookie_file:
         try:
             print("🍪 Attempt 1: Using Cookies...", file=sys.stderr)
-            title, desc = download_subs_attempt(url, temp_dir, cookie_file)
+            _, title, desc = run_downloader(cookie_file)
             success = True
         except Exception as e:
             print(f"⚠️ Attempt 1 Failed (Likely 429): {e}", file=sys.stderr)
+            import time
+            time.sleep(2) # Cooldown
 
-    # --- ATTEMPT 2: NO COOKIES (Fallback) ---
-    # Sometimes cookies are the cause of the flag. Try anonymous.
+    # Attempt 2: Try Anonymous (Fallback)
     if not success:
         try:
             print("🕵️ Attempt 2: Anonymous (No Cookies)...", file=sys.stderr)
-            # Add a small delay to reset connection
-            time.sleep(2) 
-            title, desc = download_subs_attempt(url, temp_dir, cookie_file=None)
+            _, title, desc = run_downloader(None) # Pass None for cookiefile
             success = True
         except Exception as e:
             print(f"❌ Attempt 2 Failed: {e}", file=sys.stderr)
+            try: shutil.rmtree(temp_dir)
+            except: pass
             return None, None, None
 
-    # --- PROCESS FILES ---
+    # 5. Process Files
     if success:
         files = glob.glob(os.path.join(temp_dir, "*.vtt"))
         if files:
@@ -147,18 +217,16 @@ def get_transcript_from_subs(url):
             
             try: shutil.rmtree(temp_dir)
             except: pass
-            
             return clean_text, title, desc
-    
+
     try: shutil.rmtree(temp_dir)
     except: pass
     return None, None, None
-
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
 def explain_with_gemini(transcript, title="", description=""):
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     safe_transcript = transcript[:100000] 
     
     prompt = f"""
