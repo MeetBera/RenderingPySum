@@ -3,9 +3,7 @@ import os
 import sys
 from summary import (
     configure_gemini,
-    get_transcript_from_subs,  # <--- NEW IMPORT
-    download_audio,
-    transcribe_with_gemini,
+    get_transcript_from_subs,
     explain_with_gemini
 )
 
