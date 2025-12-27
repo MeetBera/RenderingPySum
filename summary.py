@@ -185,33 +185,6 @@ def download_audio(url):
         
     return None, None, None
 
-# ---------------------------------------------------------
-# AI PROCESSING
-# ---------------------------------------------------------
-def transcribe_with_gemini(audio_path):
-    print(f"🎤 Uploading audio to Gemini...", file=sys.stderr)
-    
-    mime = "audio/mp3" # Default
-    if audio_path.endswith(".m4a"): mime = "audio/mp4"
-    
-    audio_file = genai.upload_file(audio_path, mime_type=mime)
-
-    while audio_file.state.name == "PROCESSING":
-        time.sleep(1)
-        audio_file = genai.get_file(audio_file.name)
-
-    if audio_file.state.name == "FAILED":
-        raise ValueError("Audio processing failed on Google side")
-
-    # Use 1.5 Flash for fast audio transcription
-    model = genai.GenerativeModel("gemini-1.5-flash") 
-    response = model.generate_content([audio_file, "Transcribe this audio exactly."])
-    
-    try: genai.delete_file(audio_file.name)
-    except: pass
-    
-    return response.text
-
 def explain_with_gemini(transcript, title="", description=""):
     model = genai.GenerativeModel("gemini-2.5-flash") # Or 1.5-pro
     safe_transcript = transcript[:30000] # Token safety
