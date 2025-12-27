@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 import os
 import sys
+
+# Import functions from your fixed summary.py
 from summary import (
     configure_gemini,
     get_transcript_from_subs,
@@ -18,11 +20,13 @@ except Exception as e:
 
 @app.route("/")
 def home():
-    return {"status": "running", "message": "Video Summary API"}
+    return jsonify({"status": "running", "message": "Video Summary API Ready"})
 
 @app.route("/summarize", methods=["POST"])
 def summarize_video():
     data = request.get_json()
+    
+    # Validation
     if not data or "url" not in data:
         return jsonify({"error": "URL required"}), 400
 
@@ -32,11 +36,11 @@ def summarize_video():
         # ---------------------------------------------------------
         # STRATEGY 1: FAST TRACK (Subtitles)
         # ---------------------------------------------------------
-        print("🚀 Attempting Fast Track (Subtitles)...", file=sys.stderr)
+        print(f"🚀 Processing URL: {url}", file=sys.stderr)
         transcript, title, description = get_transcript_from_subs(url)
 
         if transcript:
-            print("✅ Subtitles found! Skipping audio download.", file=sys.stderr)
+            print("✅ Subtitles found! Generating summary...", file=sys.stderr)
             
             # Generate Summary from Text
             summary = explain_with_gemini(transcript, title, description)
@@ -44,34 +48,27 @@ def summarize_video():
             return jsonify({
                 "summary": summary,
                 "title": title,
-                "description": description[:500],
+                "description": description[:500] if description else "",
                 "method": "subtitles_fast"
             })
-
-        try:
-            # 3. Generate Summary
-            summary = explain_with_gemini(transcript, title, description)
-
+        
+        # ---------------------------------------------------------
+        # STRATEGY 2: FALLBACK (Audio)
+        # ---------------------------------------------------------
+        # Note: Since we removed audio logic from summary.py to keep it simple/fast,
+        # we return an error here. If you add audio download back later, 
+        # place that logic here.
+        else:
+            print("⚠️ No subtitles found. Audio fallback is currently disabled.", file=sys.stderr)
             return jsonify({
-                "summary": summary,
-                "title": title,
-                "description": description[:500],
-                "method": "audio_slow"
-            })
-
-        finally:
-            # Always clean up the large audio file
-            if audio_path and os.path.exists(audio_path):
-                try:
-                    os.remove(audio_path)
-                    print(f"🧹 Cleaned up file: {audio_path}", file=sys.stderr)
-                except Exception as e:
-                    print(f"Warning: Cleanup failed {e}", file=sys.stderr)
+                "error": "Could not find subtitles for this video. Audio processing is disabled."
+            }), 422
 
     except Exception as e:
         print(f"❌ API Error: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
+    # Render provides the PORT env var
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
