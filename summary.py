@@ -1,169 +1,178 @@
 import sys
 import os
 import json
+import re
+import requests
 import google.generativeai as genai
-import yt_dlp
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import TextFormatter
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------
+
+PIPED_INSTANCES = [
+    "https://piped.video",
+    "https://piped.projectsegfau.lt",
+    "https://piped.lunar.icu",
+]
+
 def configure_gemini():
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
-    if api_key:
-        genai.configure(api_key=api_key)
-    else:
-        # We don't exit here, so we can at least print the transcript if API fails
-        print("⚠️ Warning: GEMINI_API_KEY not found.", file=sys.stderr)
+    if not api_key:
+        print("❌ GEMINI_API_KEY missing", file=sys.stderr)
+        sys.exit(1)
+    genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
-# STRATEGY 2: The "API" Method (Bypasses Player Block)
+# UTILITY
 # ---------------------------------------------------------
-def get_transcript_data(url):
-    video_id = ""
-    
-    # 1. Extract Video ID securely
-    try:
-        # Simple regex to get ID from standard URL
-        if "v=" in url:
-            video_id = url.split("v=")[1].split("&")[0]
-        elif "youtu.be/" in url:
-            video_id = url.split("youtu.be/")[1].split("?")[0]
-        else:
-            # Fallback to yt-dlp just for ID extraction if regex fails
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                info = ydl.extract_info(url, download=False)
-                video_id = info.get('id')
-    except Exception as e:
-        print(f"❌ Could not extract Video ID: {e}", file=sys.stderr)
-        return None, None, None
 
-    print(f"🆔 Video ID: {video_id}", file=sys.stderr)
+def extract_video_id(url: str) -> str | None:
+    if "v=" in url:
+        return url.split("v=")[1].split("&")[0]
+    if "youtu.be/" in url:
+        return url.split("youtu.be/")[1].split("?")[0]
+    return None
 
-    # 2. Fetch Transcript via specialized API (Bypasses yt-dlp blocks)
-    transcript_text = ""
-    try:
-        # Try fetching transcript (Auto-detected priority: Manual English -> Manual Hindi -> Auto)
-        # This library handles the complex "which language" logic automatically
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        # Priority Logic:
-        # 1. Manually created English
-        # 2. Manually created Hindi
-        # 3. Auto-generated English
+
+def clean_vtt_text(vtt: str) -> str:
+    lines = vtt.splitlines()
+    out = []
+    seen = set()
+
+    for line in lines:
+        if (
+            not line.strip()
+            or "WEBVTT" in line
+            or "-->" in line
+            or line.strip().isdigit()
+        ):
+            continue
+
+        line = re.sub(r"<[^>]+>", "", line).strip()
+        if line and line not in seen:
+            seen.add(line)
+            out.append(line)
+
+    return " ".join(out)
+
+# ---------------------------------------------------------
+# STRATEGY 1: PIPED CAPTION MIRROR (RENDER SAFE)
+# ---------------------------------------------------------
+
+def get_transcript_via_piped(video_id):
+    for base in PIPED_INSTANCES:
         try:
-            transcript = transcript_list.find_transcript(['en', 'hi'])
-        except:
-            # Fallback to auto-generated if manual not found
-            try:
-                transcript = transcript_list.find_generated_transcript(['en'])
-            except:
-                # Absolute fallback: just give me anything you have
-                transcript = transcript_list.find_manually_created_transcript(['en', 'hi'])
+            meta = requests.get(
+                f"{base}/api/v1/captions/{video_id}",
+                timeout=8
+            )
+            meta.raise_for_status()
+            captions = meta.json()
 
-        # Fetch the actual data
-        full_data = transcript.fetch()
-        
-        # Format to clean text
-        formatter = TextFormatter()
-        transcript_text = formatter.format_transcript(full_data)
-        
-        # Clean up whitespace
-        transcript_text = transcript_text.replace("\n", " ")
+            if not captions:
+                continue
 
-    except Exception as e:
-        print(f"⚠️ Transcript API failed: {e}", file=sys.stderr)
-        return None, None, None
+            # Prefer English
+            for cap in captions:
+                if cap.get("language", "").startswith("en"):
+                    vtt = requests.get(cap["url"], timeout=8).text
+                    return clean_vtt_text(vtt)
 
-    # 3. Fetch Metadata (Title/Desc) via yt-dlp (Lightweight)
-    # Even if this fails due to 429, we still have the transcript!
-    title = "Unknown Title"
-    desc = ""
-    try:
-        opts = {
-            'quiet': True, 
-            'skip_download': True,
-            'ignoreerrors': True, # Don't crash if metadata fetch fails
-            'no_warnings': True
-        }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if info:
-                title = info.get('title', 'Unknown Title')
-                desc = info.get('description', '')
-    except:
-        print("⚠️ Metadata fetch failed (Title might be missing), but transcript is safe.", file=sys.stderr)
+            # Fallback to first available
+            vtt = requests.get(captions[0]["url"], timeout=8).text
+            return clean_vtt_text(vtt)
 
-    return transcript_text, title, desc
+        except Exception:
+            continue
+
+    return None
+
+# ---------------------------------------------------------
+# METADATA (OPTIONAL, NON-BLOCKING)
+# ---------------------------------------------------------
+
+def get_metadata_via_piped(video_id):
+    for base in PIPED_INSTANCES:
+        try:
+            r = requests.get(
+                f"{base}/api/v1/video/{video_id}",
+                timeout=8
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data.get("title", ""), data.get("description", "")
+        except Exception:
+            continue
+
+    return "Unknown Title", ""
 
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
+
 def explain_with_gemini(transcript, title="", description=""):
     model = genai.GenerativeModel("gemini-2.5-flash")
-    # Safety limit
-    safe_transcript = transcript[:100000]
-    
+
+    safe_transcript = transcript[:100_000]
+
     prompt = f"""
-    You are a product-quality note designer.
-    Turn this video transcript into **beautiful, human-friendly notes**.
+You are a product-quality note designer.
 
-    METADATA:
-    Title: {title}
-    Description: {description[:500]}
+Create calm, clear, human-friendly notes.
 
-    TRANSCRIPT:
-    {safe_transcript}
+Title: {title}
+Description: {description[:500]}
 
-    OUTPUT FORMAT:
-    ## Summary
-    (Concise overview)
+Transcript:
+{safe_transcript}
 
-    ## Key Points
-    - (Bulleted list)
-    """
-    
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        raise Exception(f"Gemini API Error: {str(e)}")
+Output:
+## Summary
+(short overview)
+
+## Key Points
+- clear bullets
+"""
+
+    response = model.generate_content(prompt)
+    return response.text
 
 # ---------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------
+
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "No URL provided"}), file=sys.stderr)
-        return
+        print(json.dumps({"error": "No URL provided"}))
+        sys.exit(1)
 
     url = sys.argv[1]
     configure_gemini()
 
-    print(f"🚀 Processing: {url}", file=sys.stderr)
-    
-    # Use the new robust method
-    transcript, title, desc = get_transcript_data(url)
-
-    if transcript:
-        print("✅ Transcript acquired. Summarizing...", file=sys.stderr)
-        try:
-            summary = explain_with_gemini(transcript, title, desc)
-            summary = summary.replace("\u2028", "").replace("\u2029", "")
-            print(json.dumps({
-                "summary": summary,
-                "title": title,
-                "method": "youtube_transcript_api"
-            }))
-        except Exception as e:
-            print(f"❌ Gemini Error: {e}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        print("❌ FATAL: Could not retrieve subtitles.", file=sys.stderr)
+    video_id = extract_video_id(url)
+    if not video_id:
+        print(json.dumps({"error": "Invalid YouTube URL"}))
         sys.exit(1)
+
+    print(f"🚀 Processing video: {video_id}", file=sys.stderr)
+
+    transcript = get_transcript_via_piped(video_id)
+    if not transcript:
+        print("❌ No captions available (mirror-safe failure).", file=sys.stderr)
+        sys.exit(1)
+
+    title, desc = get_metadata_via_piped(video_id)
+
+    summary = explain_with_gemini(transcript, title, desc)
+    summary = summary.replace("\u2028", "").replace("\u2029", "")
+
+    print(json.dumps({
+        "title": title,
+        "summary": summary,
+        "method": "piped_captions"
+    }))
 
 if __name__ == "__main__":
     main()
