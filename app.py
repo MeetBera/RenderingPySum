@@ -107,21 +107,7 @@ def summarize_video():
                 "method": "subtitles_fast"
             })
 
-        # ---------------------------------------------------------
-        # STRATEGY 2: SLOW TRACK (Audio Fallback)
-        # ---------------------------------------------------------
-        print("⚠️ No subtitles found. Falling back to Audio (Slow)...", file=sys.stderr)
-        
-        # 1. Download Audio
-        audio_path, title, description = download_audio(url)
-
-        if not audio_path:
-            return jsonify({"error": "Audio download failed"}), 500
-
         try:
-            # 2. Transcribe Audio
-            transcript = transcribe_with_gemini(audio_path)
-
             # 3. Generate Summary
             summary = explain_with_gemini(transcript, title, description)
 
