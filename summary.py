@@ -155,7 +155,7 @@ def get_transcript_from_subs(url):
 # ---------------------------------------------------------
 def explain_with_gemini(transcript, title="", description=""):
     # FIX: Use 1.5-flash (2.5 doesn't exist publicly)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     safe_transcript = transcript[:100000] 
     
     prompt = f"""
