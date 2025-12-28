@@ -50,11 +50,11 @@ def clean_vtt_text(vtt_content):
 # CORE LOGIC: Robust Subtitle Fetch
 # ---------------------------------------------------------
 def get_transcript_from_subs(url):
-    # 1. Handle Cookie File
+    # 1. Handle Cookie File (Render Secrets)
     cookie_file = None
     if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
-        # Copy to temp to ensure it's writable/readable
         try:
+            # Copy to temp to ensure permissions work
             shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
             cookie_file = "/tmp/youtube_cookies.txt"
         except:
@@ -62,29 +62,32 @@ def get_transcript_from_subs(url):
     elif os.path.exists("youtube.com_cookies.txt"):
         cookie_file = "youtube.com_cookies.txt"
 
-    # 2. Configure yt-dlp
-    # We allow 'android' AND 'web' clients to give yt-dlp options if one fails
+    # 2. Configure yt-dlp for Render Environment
     ydl_opts = {
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
         "cookiefile": cookie_file,
-        "extract_flat": False,
-        "forcejson": True,
-        # PROXY: If you have a proxy, add it here: 'proxy': 'http://user:pass@host:port',
+        "extract_flat": False,  # We need deep info for subs
+        
+        # --- CRITICAL FIXES FOR RENDER ---
+        "ignore_no_formats_error": True,  # Don't crash if YouTube blocks video streams
+        "writesubtitles": True,           # Explicitly ask for subs
+        "writeautomaticsub": True,        # Explicitly ask for auto-generated subs
+        
+        # Use Android client (less likely to be blocked on Data Centers)
         "extractor_args": {
             "youtube": {
-                # Try android first (good for age-gate), then web (standard)
-                "player_client": ["android", "web"]
+                "player_client": ["android", "web"],
+                "player_skip": ["configs", "js"], # Skip extra requests to save time/bandwidth
             }
         },
-        # User Agent to look like a standard browser
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # This is where it was failing. Updating yt-dlp fixes this.
+            # This extraction might take 2-3 seconds on Render
             info = ydl.extract_info(url, download=False)
 
         title = info.get("title", "Unknown Title")
@@ -95,14 +98,12 @@ def get_transcript_from_subs(url):
         captions.update(info.get("subtitles") or {})
         captions.update(info.get("automatic_captions") or {})
 
-
         if not captions:
             print("❌ No captions found in metadata.", file=sys.stderr)
             return None, None, None
 
         # Logic: English -> Hindi -> First Available
         lang = None
-        
         # Check for English
         for k in captions:
             if k.startswith("en"):
@@ -115,7 +116,7 @@ def get_transcript_from_subs(url):
                 if k.startswith("hi"):
                     lang = k
                     break
-                    
+        
         # Fallback
         if not lang:
             lang = list(captions.keys())[0]
@@ -126,25 +127,20 @@ def get_transcript_from_subs(url):
         subs_list = captions.get(lang, [])
         vtt_url = None
         
-        # Look for vtt format specifically
         for sub in subs_list:
             if sub.get('ext') == 'vtt':
                 vtt_url = sub.get('url')
                 break
         
-        # Fallback to whatever URL is there (usually json3 or srv1, but we need text)
+        # Fallback to first available if no VTT
         if not vtt_url and subs_list:
             vtt_url = subs_list[0].get('url')
 
         if not vtt_url:
             return None, None, None
 
-        # 4. Download content directly (Bypassing yt-dlp download logic)
-        # Using the same cookies for the request is sometimes needed
+        # 4. Download content
         headers = {"User-Agent": ydl_opts["user_agent"]}
-        
-        # Note: We don't usually pass cookies to the subtitle URL fetch, 
-        # but if it fails, you might need to use a session with cookies.
         r = requests.get(vtt_url, headers=headers, timeout=10)
         r.raise_for_status()
 
@@ -154,7 +150,6 @@ def get_transcript_from_subs(url):
     except Exception as e:
         print(f"⚠️ Subtitle extraction failed: {e}", file=sys.stderr)
         return None, None, None
-
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
