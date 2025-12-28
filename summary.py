@@ -75,8 +75,7 @@ def get_transcript_from_subs(url):
         "extractor_args": {
             "youtube": {
                 # Try android first (good for age-gate), then web (standard)
-                "player_client": ["android", "web"],
-                "skip": ["dash", "hls"]
+                "player_client": ["android", "web"]
             }
         },
         # User Agent to look like a standard browser
@@ -92,7 +91,10 @@ def get_transcript_from_subs(url):
         desc = info.get("description", "")
 
         # 3. Extract Subtitles manually
-        captions = info.get("subtitles") or info.get("automatic_captions") or {}
+        captions = {}
+        captions.update(info.get("subtitles") or {})
+        captions.update(info.get("automatic_captions") or {})
+
 
         if not captions:
             print("❌ No captions found in metadata.", file=sys.stderr)
