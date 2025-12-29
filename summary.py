@@ -75,15 +75,10 @@ def get_transcript_from_subs(url):
 
     # --- 3. FETCH METADATA & SELECT LANGUAGE ---
     meta_opts = {
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-        "cookiefile": cookie_file,
-        "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "web", "ios"]
-            }
-        }
+        'skip_download': True,
+        'quiet': True,
+        'no_warnings': True,
+        'cookiefile': cookie_file
     }
 
     video_id = "unknown"
@@ -135,22 +130,16 @@ def get_transcript_from_subs(url):
         return None, None, None
 
     # --- 4. DOWNLOAD SUBTITLES (ONE REQUEST ONLY) ---
-    dl_opts = {
-        "skip_download": True,
-        "subtitleslangs": [target_lang],
-        "subtitlesformat": "vtt",
-        "outtmpl": f"{temp_dir}/%(id)s",
-        "quiet": True,
-        "no_warnings": True,
-        "cookiefile": cookie_file,
-        "writesubtitles": not use_auto,
-        "writeautomaticsub": use_auto,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web", "ios"]
-            }
-        }
-
+    opts = {
+        'skip_download': True,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': [target_lang], # Use our smart choice
+        'subtitlesformat': 'vtt',
+        'outtmpl': os.path.join(temp_dir, '%(id)s'), 
+        'quiet': True,
+        'no_warnings': True,
+        'cookiefile': cookie_file
     }
 
     try:
