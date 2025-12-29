@@ -71,19 +71,12 @@ def explain_with_gemini(url, title, description, channel):
     
     prompt = f"""
     explain the video in easy detailed way
-
-    OUTPUT FORMAT:
-    Formatting Rules:
     - Use **bold** for important ideas
-    - Use *italic* for emphasis or clarification
-    - Use short sections with clear spacing
-    - Use light symbols (→, •) only if helpful
 
     Content Style:
     - Explain ideas simply, not academically
     - Highlight *why something matters*
     - Reduce clutter and repetition
-    - Make it feel like well-crafted product notes.
     
     VIDEO DATA:
     - URL: {url}
