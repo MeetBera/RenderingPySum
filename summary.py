@@ -67,22 +67,17 @@ def get_video_metadata(url):
 # ---------------------------------------------------------
 def explain_with_gemini(url, title, description, channel):
     # Using 1.5 Flash for speed
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
     explain the video in easy detailed way
 
     OUTPUT FORMAT:
-    Tone & Care:
-    - Make it calm, helpful, and easy to scan
-
     Formatting Rules:
     - Use **bold** for important ideas
     - Use *italic* for emphasis or clarification
     - Use short sections with clear spacing
-    - Avoid heavy Markdown (no ## headings)
     - Use light symbols (→, •) only if helpful
-    - No code blocks
 
     Content Style:
     - Explain ideas simply, not academically
