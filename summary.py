@@ -50,105 +50,133 @@ def clean_vtt_text(vtt_content):
 # CORE LOGIC: Robust Subtitle Fetch
 # ---------------------------------------------------------
 def get_transcript_from_subs(url):
-    # 1. Handle Cookie File (Render Secrets)
+    import os, sys, glob, shutil, contextlib
+    import yt_dlp
+    import requests
+
+    # -----------------------------
+    # 1. Cookie handling (Render-safe)
+    # -----------------------------
     cookie_file = None
     if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
         try:
-            # Copy to temp to ensure permissions work
-            shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
+            shutil.copy(
+                "/etc/secrets/youtube.com_cookies.txt",
+                "/tmp/youtube_cookies.txt"
+            )
             cookie_file = "/tmp/youtube_cookies.txt"
         except:
             cookie_file = "/etc/secrets/youtube.com_cookies.txt"
     elif os.path.exists("youtube.com_cookies.txt"):
         cookie_file = "youtube.com_cookies.txt"
 
-    # 2. Configure yt-dlp for Render Environment
-    ydl_opts = {
+    # -----------------------------
+    # 2. Temp dir (Render compatible)
+    # -----------------------------
+    temp_dir = "/tmp/ytdlp_subs"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    # cleanup old subs
+    for f in glob.glob(os.path.join(temp_dir, "*.vtt")):
+        try:
+            os.remove(f)
+        except:
+            pass
+
+    # -----------------------------
+    # 3. METADATA pass (language decision only)
+    # -----------------------------
+    meta_opts = {
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
         "cookiefile": cookie_file,
-        "extract_flat": False,  # We need deep info for subs
-        
-        # --- CRITICAL FIXES FOR RENDER ---
-        "ignore_no_formats_error": True,  # Don't crash if YouTube blocks video streams
-        "writesubtitles": True,           # Explicitly ask for subs
-        "writeautomaticsub": True,        # Explicitly ask for auto-generated subs
-        
-        # Use Android client (less likely to be blocked on Data Centers)
+        "ignore_no_formats_error": True,
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "web"],
-                "player_skip": ["configs", "js"], # Skip extra requests to save time/bandwidth
             }
         },
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # This extraction might take 2-3 seconds on Render
+        with yt_dlp.YoutubeDL(meta_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
+        video_id = info.get("id")
         title = info.get("title", "Unknown Title")
         desc = info.get("description", "")
 
-        # 3. Extract Subtitles manually
-        captions = {}
-        captions.update(info.get("subtitles") or {})
-        captions.update(info.get("automatic_captions") or {})
+        manual = info.get("subtitles", {}) or {}
+        auto = info.get("automatic_captions", {}) or {}
+        all_langs = set(manual.keys()) | set(auto.keys())
 
-        if not captions:
-            print("❌ No captions found in metadata.", file=sys.stderr)
+        if not all_langs:
+            print("❌ No subtitles advertised.", file=sys.stderr)
             return None, None, None
 
-        # Logic: English -> Hindi -> First Available
-        lang = None
-        # Check for English
-        for k in captions:
-            if k.startswith("en"):
-                lang = k
-                break
-        
-        # Check for Hindi
-        if not lang:
-            for k in captions:
-                if k.startswith("hi"):
-                    lang = k
-                    break
-        
-        # Fallback
-        if not lang:
-            lang = list(captions.keys())[0]
+        # Priority: English → Hindi → anything
+        if any(l.startswith("en") for l in all_langs):
+            target_lang = "en.*"
+        elif any(l.startswith("hi") for l in all_langs):
+            target_lang = "hi.*"
+        else:
+            target_lang = ".*"
 
-        print(f"✅ Selected Language: {lang}", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Metadata extraction failed: {e}", file=sys.stderr)
+        return None, None, None
 
-        # Get the URL of the VTT format
-        subs_list = captions.get(lang, [])
-        vtt_url = None
-        
-        for sub in subs_list:
-            if sub.get('ext') == 'vtt':
-                vtt_url = sub.get('url')
-                break
-        
-        # Fallback to first available if no VTT
-        if not vtt_url and subs_list:
-            vtt_url = subs_list[0].get('url')
+    # -----------------------------
+    # 4. FORCED subtitle download (critical for Render)
+    # -----------------------------
+    dl_opts = {
+        "skip_download": True,
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitleslangs": [target_lang],
+        "subtitlesformat": "vtt",
+        "outtmpl": os.path.join(temp_dir, "%(id)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "ignore_no_formats_error": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            }
+        },
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
 
-        if not vtt_url:
+    try:
+        with yt_dlp.YoutubeDL(dl_opts) as ydl:
+            ydl.download([url])
+
+        vtt_files = glob.glob(os.path.join(temp_dir, f"{video_id}*.vtt"))
+        if not vtt_files:
+            print("❌ Subtitle download produced no files.", file=sys.stderr)
             return None, None, None
 
-        # 4. Download content
-        headers = {"User-Agent": ydl_opts["user_agent"]}
-        r = requests.get(vtt_url, headers=headers, timeout=10)
-        r.raise_for_status()
+        with open(vtt_files[0], "r", encoding="utf-8") as f:
+            raw_text = f.read()
 
-        clean_text = clean_vtt_text(r.text)
+        clean_text = clean_vtt_text(raw_text)
+
+        # optional cleanup
+        try:
+            shutil.rmtree(temp_dir)
+        except:
+            pass
+
         return clean_text, title, desc
 
     except Exception as e:
-        print(f"⚠️ Subtitle extraction failed: {e}", file=sys.stderr)
+        print(f"⚠️ Subtitle download failed: {e}", file=sys.stderr)
         return None, None, None
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
