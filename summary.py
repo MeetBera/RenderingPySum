@@ -49,26 +49,20 @@ def clean_vtt_text(vtt_content):
 # ---------------------------------------------------------
 # CORE LOGIC: Robust Subtitle Fetch
 # ---------------------------------------------------------
-import os
-import glob
-import shutil
-import sys
-import yt_dlp
-import contextlib
 
 def get_transcript_from_subs(url):
+    import os, sys, shutil, glob, yt_dlp
+
     # --- 1. SETUP TEMP DIRECTORY (Render Safe) ---
-    # We use a specific subfolder in /tmp to avoid file collisions
     temp_dir = "/tmp/yt_subs"
     if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)  # Clean start
+        shutil.rmtree(temp_dir)
     os.makedirs(temp_dir)
 
-    # --- 2. HANDLE COOKIES (Render Secrets) ---
+    # --- 2. HANDLE COOKIES ---
     cookie_file = None
     if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
         try:
-            # Copy to temp to ensure permissions work
             dest = "/tmp/youtube_cookies.txt"
             shutil.copy("/etc/secrets/youtube.com_cookies.txt", dest)
             cookie_file = dest
@@ -79,139 +73,105 @@ def get_transcript_from_subs(url):
 
     print(f"🍪 Cookie file used: {cookie_file}", file=sys.stderr)
 
-    # --- 3. METADATA & LANGUAGE SELECTION ---
-    # We fetch metadata first to check what languages exist
+    # --- 3. FETCH METADATA & SELECT LANGUAGE ---
     meta_opts = {
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
         "cookiefile": cookie_file,
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "extractor_args": {
+            "youtube": {"player_client": ["android"]}
+        }
     }
 
-    target_lang = 'en.*' # Default fallback
     video_id = "unknown"
     title = "Unknown"
     desc = ""
+    target_lang = None
+    use_auto = True
 
     try:
         with yt_dlp.YoutubeDL(meta_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            video_id = info.get('id')
-            title = info.get('title', 'No Title')
-            desc = info.get('description', '')
 
-            # Combine manual and auto-generated captions
-            manual_subs = list(info.get('subtitles', {}).keys())
-            auto_subs = list(info.get('automatic_captions', {}).keys())
-            all_langs = set(manual_subs + auto_subs)
-            
-            print(f"ℹ️ Found Languages: {all_langs}", file=sys.stderr)
+        video_id = info.get("id")
+        title = info.get("title", "No Title")
+        desc = info.get("description", "")
 
-            # --- SMART PRIORITY LOGIC ---
-            # 1. English
-            if any(l.startswith('en') for l in all_langs):
-                target_lang = 'en.*'
-                print("✅ Selected: English", file=sys.stderr)
-            # 2. Hindi
-            elif any(l.startswith('hi') for l in all_langs):
-                target_lang = 'hi.*'
-                print("✅ Selected: Hindi", file=sys.stderr)
-            # 3. Fallback to whatever is available (e.g., auto-generated)
-            elif len(all_langs) > 0:
-                target_lang = list(all_langs)[0]
-                print(f"✅ Selected Fallback: {target_lang}", file=sys.stderr)
-            else:
-                print("❌ No subtitles found at all.", file=sys.stderr)
-                return None, None, None
+        auto_subs = info.get("automatic_captions", {})
+        manual_subs = info.get("subtitles", {})
+
+        print(
+            f"ℹ️ Auto: {list(auto_subs.keys())} | Manual: {list(manual_subs.keys())}",
+            file=sys.stderr,
+        )
+
+        # --- LANGUAGE PRIORITY (NO REGEX) ---
+        if "en" in auto_subs:
+            target_lang = "en"
+            use_auto = True
+        elif "hi" in auto_subs:
+            target_lang = "hi"
+            use_auto = True
+        elif auto_subs:
+            target_lang = list(auto_subs.keys())[0]
+            use_auto = True
+        elif manual_subs:
+            target_lang = list(manual_subs.keys())[0]
+            use_auto = False
+        else:
+            print("❌ No subtitles available", file=sys.stderr)
+            return None, None, None
+
+        print(
+            f"✅ Selected language: {target_lang} ({'auto' if use_auto else 'manual'})",
+            file=sys.stderr,
+        )
 
     except Exception as e:
         print(f"⚠️ Metadata fetch failed: {e}", file=sys.stderr)
         return None, None, None
 
-    # --- 4. DOWNLOAD SUBTITLES ---
-    # Now we download ONLY the selected subtitle file
+    # --- 4. DOWNLOAD SUBTITLES (ONE REQUEST ONLY) ---
     dl_opts = {
-        'skip_download': True,      # Don't download video
-        'writesubtitles': True,     # Download manual subs
-        'writeautomaticsub': True,  # Download auto subs
-        'subtitleslangs': [target_lang], 
-        'subtitlesformat': 'vtt',   # Force VTT format
-        'outtmpl': f"{temp_dir}/%(id)s", # Save to our temp folder
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file,
+        "skip_download": True,
+        "subtitleslangs": [target_lang],
+        "subtitlesformat": "vtt",
+        "outtmpl": f"{temp_dir}/%(id)s",
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "writesubtitles": not use_auto,
+        "writeautomaticsub": use_auto,
+        "extractor_args": {
+            "youtube": {"player_client": ["android"]}
+        },
     }
 
     try:
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
             ydl.download([url])
 
-        # --- 5. FIND AND READ FILE ---
-        # yt-dlp appends the language code to the filename (e.g., videoID.en.vtt)
-        # We use glob to find whatever file appeared in our temp folder
-        potential_files = glob.glob(os.path.join(temp_dir, "*.vtt"))
-
-        if potential_files:
-            sub_path = potential_files[0]
-            print(f"📂 Reading file: {sub_path}", file=sys.stderr)
-            
-            with open(sub_path, 'r', encoding='utf-8') as f:
-                raw_text = f.read()
-
-            # Clean the text using your existing function
-            clean_text = clean_vtt_text(raw_text)
-
-            # --- 6. CLEANUP ---
-            shutil.rmtree(temp_dir)
-            
-            return clean_text, title, desc
-        else:
-            print("❌ Download finished but no .vtt file found.", file=sys.stderr)
+        files = glob.glob(os.path.join(temp_dir, "*.vtt"))
+        if not files:
+            print("❌ Subtitle download finished but no file found", file=sys.stderr)
             return None, None, None
+
+        sub_path = files[0]
+        print(f"📂 Reading: {sub_path}", file=sys.stderr)
+
+        with open(sub_path, "r", encoding="utf-8") as f:
+            raw_text = f.read()
+
+        clean_text = clean_vtt_text(raw_text)
+        shutil.rmtree(temp_dir)
+        return clean_text, title, desc
 
     except Exception as e:
         print(f"⚠️ Subtitle download failed: {e}", file=sys.stderr)
-        # Cleanup on fail
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
         return None, None, None
-    # 2. DOWNLOAD SELECTED LANGUAGE
-    opts = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': [target_lang], # Use our smart choice
-        'subtitlesformat': 'vtt',
-        'outtmpl': os.path.join(temp_dir, '%(id)s'), 
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file
-    }
-
-    try:
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
-
-        potential_files = glob.glob(os.path.join(temp_dir, f"{video_id}*.vtt"))
-        
-        if potential_files:
-            sub_path = potential_files[0]
-            print(f"✅ Found subtitles: {sub_path}", file=sys.stderr)
-            
-            with open(sub_path, 'r', encoding='utf-8') as f:
-                raw_text = f.read()
-            
-            clean_text = clean_vtt_text(raw_text)
-            try: shutil.rmtree(temp_dir)
-            except: pass
-            return clean_text, title, desc
-            
-    except Exception as e:
-        print(f"⚠️ Subtitle download failed: {e}", file=sys.stderr)
-    
-    return None, None, None
 
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
