@@ -80,7 +80,9 @@ def get_transcript_from_subs(url):
         "no_warnings": True,
         "cookiefile": cookie_file,
         "extractor_args": {
-            "youtube": {"player_client": ["android"]}
+        "youtube": {
+            "player_client": ["android", "web", "ios"]
+            }
         }
     }
 
@@ -144,8 +146,11 @@ def get_transcript_from_subs(url):
         "writesubtitles": not use_auto,
         "writeautomaticsub": use_auto,
         "extractor_args": {
-            "youtube": {"player_client": ["android"]}
-        },
+            "youtube": {
+                "player_client": ["android", "web", "ios"]
+            }
+        }
+
     }
 
     try:
