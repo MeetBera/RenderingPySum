@@ -111,21 +111,38 @@ def get_transcript_from_subs(url):
         )
 
         # --- LANGUAGE PRIORITY (NO REGEX) ---
-        if "en" in auto_subs:
-            target_lang = "en"
+        # --- LANGUAGE PRIORITY (ANTI-429, ORIGINAL FIRST) ---
+
+        # 1. Prefer original language (hi-orig, ta-orig, etc.)
+        orig_langs = [l for l in auto_subs if l.endswith("-orig")]
+        if orig_langs:
+            target_lang = orig_langs[0]
             use_auto = True
+        
+        # 2. Prefer Hindi
         elif "hi" in auto_subs:
             target_lang = "hi"
             use_auto = True
+        
+        # 3. Prefer any non-English language
         elif auto_subs:
-            target_lang = list(auto_subs.keys())[0]
-            use_auto = True
+            non_en = [l for l in auto_subs if l != "en"]
+            if non_en:
+                target_lang = non_en[0]
+                use_auto = True
+            else:
+                target_lang = "en"
+                use_auto = True
+        
+        # 4. Manual subtitles fallback
         elif manual_subs:
             target_lang = list(manual_subs.keys())[0]
             use_auto = False
+        
         else:
             print("❌ No subtitles available", file=sys.stderr)
             return None, None, None
+
 
         print(
             f"✅ Selected language: {target_lang} ({'auto' if use_auto else 'manual'})",
