@@ -70,13 +70,7 @@ def explain_with_gemini(url, title, description, channel):
     model = genai.GenerativeModel("gemini-2.5-flash")
     
     prompt = f"""
-    explain the video in easy detailed way
-    - Use **bold** for important ideas
-
-    Content Style:
-    - Explain ideas simply, not academically
-    - Highlight *why something matters*
-    - Reduce clutter and repetition
+    explain the video in easy detailed way using transcript
     
     VIDEO DATA:
     - URL: {url}
