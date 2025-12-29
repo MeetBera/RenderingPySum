@@ -27,7 +27,7 @@ def configure_gemini():
 def explain_url_directly(video_url):
     # Using gemini-1.5-flash as it is fast and cost-effective
     # Ensure your API key has access to the model specified here
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     
     prompt = f"""
     You are a product-quality note designer.
