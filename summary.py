@@ -67,7 +67,7 @@ def get_video_metadata(url):
 # ---------------------------------------------------------
 def explain_with_gemini(url, title, description, channel):
     # Using 1.5 Flash for speed
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     
     prompt = f"""
     Turn this video transcript into **beautiful, human-friendly notes** that feel
