@@ -75,10 +75,17 @@ def get_transcript_from_subs(url):
 
     # --- 3. FETCH METADATA & SELECT LANGUAGE ---
     meta_opts = {
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file
+    "skip_download": True,
+    "quiet": True,
+    "no_warnings": True,
+    "cookiefile": cookie_file,
+    "format": "bestaudio/best",
+    "ignore_no_formats_error": True,
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web", "ios"]
+            }
+        }
     }
 
     video_id = "unknown"
@@ -129,18 +136,26 @@ def get_transcript_from_subs(url):
         print(f"⚠️ Metadata fetch failed: {e}", file=sys.stderr)
         return None, None, None
 
-    # --- 4. DOWNLOAD SUBTITLES (ONE REQUEST ONLY) ---
-    opts = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': [target_lang], # Use our smart choice
-        'subtitlesformat': 'vtt',
-        'outtmpl': os.path.join(temp_dir, '%(id)s'), 
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file
+        # --- 4. DOWNLOAD SUBTITLES (ONE REQUEST ONLY) ---
+    dl_opts = {
+        "skip_download": True,
+        "subtitleslangs": [target_lang],
+        "subtitlesformat": "vtt",
+        "outtmpl": f"{temp_dir}/%(id)s",
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "writesubtitles": not use_auto,
+        "writeautomaticsub": use_auto,
+        "format": "bestaudio/best",
+        "ignore_no_formats_error": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web", "ios"]
+            }
+        }
     }
+
 
     try:
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
