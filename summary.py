@@ -1,7 +1,9 @@
 import sys
 import os
 import json
+import shutil
 import google.generativeai as genai
+import yt_dlp
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------
@@ -11,41 +13,95 @@ def configure_gemini():
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     
-    # Fallback for local testing
-    if not api_key:
-        # api_key = "AIzaSy..." 
-        pass
-        
     if api_key:
         genai.configure(api_key=api_key)
     else:
         print("❌ Error: No GEMINI_API_KEY found.", file=sys.stderr)
+        sys.exit(1)
 
 # ---------------------------------------------------------
-# GEMINI SUMMARIZATION
+# METADATA FETCHING (No Transcripts)
 # ---------------------------------------------------------
-def explain_url_directly(video_url):
-    # Using gemini-1.5-flash as it is fast and cost-effective
-    # Ensure your API key has access to the model specified here
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+def get_video_metadata(url):
+    # 1. Handle Cookie File (Render Secrets) - Kept for age-restricted metadata access
+    cookie_file = None
+    if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
+        try:
+            shutil.copy("/etc/secrets/youtube.com_cookies.txt", "/tmp/youtube_cookies.txt")
+            cookie_file = "/tmp/youtube_cookies.txt"
+        except:
+            cookie_file = "/etc/secrets/youtube.com_cookies.txt"
+    elif os.path.exists("youtube.com_cookies.txt"):
+        cookie_file = "youtube.com_cookies.txt"
+
+    # 2. Configure yt-dlp for fast metadata extraction
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "skip_download": True,
+        # extract_flat: True is much faster, it doesn't check video formats
+        # However, sometimes we need 'False' to get full description depending on the video type.
+        # usually 'True' is enough for title/desc/uploader.
+        "extract_flat": True, 
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            # Extract specific fields
+            title = info.get("title", "Unknown Title")
+            desc = info.get("description", "")
+            channel = info.get("uploader", "Unknown Channel")
+            
+            return title, desc, channel
+
+    except Exception as e:
+        print(f"⚠️ Metadata extraction failed: {e}", file=sys.stderr)
+        return None, None, None
+
+# ---------------------------------------------------------
+# GEMINI SUMMARIZATION (Based on Metadata)
+# ---------------------------------------------------------
+def explain_with_gemini(url, title, description, channel):
+    # Using 1.5 Flash for speed
+    model = genai.GenerativeModel("gemini-1.5-flash")
     
     prompt = f"""
-    You are a product-quality note designer.
+    Turn this video transcript into **beautiful, human-friendly notes** that feel
+    carefully written for real users.
     
-    Please analyze the video at this URL: {video_url}
-    
-    OUTPUT FORMAT:
-    ## Summary
-    (Concise overview)
+    VIDEO DATA:
+    - URL: {url}
+    - Channel Name: {channel}
+    - Title: {title}
+    - Description: 
+    {description}
 
-    ## Key Points
-    - (Bulleted list)
+    OUTPUT FORMAT:
+    Tone & Care:
+    - Write as if you genuinely care about the reader
+    - Make it calm, helpful, and easy to scan
+    - Assume the reader may be tired or busy
+
+    Formatting Rules:
+    - Use **bold** for important ideas
+    - Use *italic* for emphasis or clarification
+    - Use short sections with clear spacing
+    - Avoid heavy Markdown (no ## headings)
+    - Use light symbols (→, •) only if helpful
+    - No code blocks
+
+    Content Style:
+    - Explain ideas simply, not academically
+    - Highlight *why something matters*
+    - Reduce clutter and repetition
+    - Make it feel like well-crafted product notes.
     """
     
     try:
-        # We pass the prompt directly. 
-        # Note: Standard API keys may treat the URL as text unless 
-        # Search Grounding is enabled in your Google Cloud project.
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
@@ -62,31 +118,38 @@ def main():
     url = sys.argv[1]
     configure_gemini()
 
-    print(f"🚀 Sending URL to Gemini: {url}", file=sys.stderr)
+    print(f"🚀 Fetching Metadata for: {url}", file=sys.stderr)
+    
+    # 1. Get Metadata Only
+    title, desc, channel = get_video_metadata(url)
 
-    try:
-        summary = explain_url_directly(url)
-        
-        # Clean up potential zero-width spaces
-        summary = summary.replace("\u2028", "").replace("\u2029", "")
-        
-        print(json.dumps({
-            "summary": summary,
-            "title": "Video Analysis", # We cannot get the title without scraping/yt-dlp
-            "method": "direct_url_prompt"
-        }))
-        
-    except Exception as e:
-        print(f"❌ Error: {e}", file=sys.stderr)
-        # Output a JSON error for the frontend to handle
-        print(json.dumps({
-            "error": str(e),
-            "summary": "Could not generate summary from URL directly."
-        }))
+    if title:
+        print(f"✅ Metadata acquired: {title[:30]}...", file=sys.stderr)
+        try:
+            # 2. Generate Summary based on Metadata
+            summary = explain_with_gemini(url, title, desc, channel)
+            
+            # Cleanup output for JSON
+            summary = summary.replace("\u2028", "").replace("\u2029", "")
+            
+            print(json.dumps({
+                "summary": summary,
+                "title": title,
+                "channel": channel,
+                "method": "metadata_only"
+            }))
+        except Exception as e:
+            print(f"❌ Gemini Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("❌ FATAL: Could not retrieve video metadata.", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 # import sys
