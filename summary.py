@@ -70,21 +70,11 @@ def explain_with_gemini(url, title, description, channel):
     model = genai.GenerativeModel("gemini-2.5-flash-lite")
     
     prompt = f"""
-    Turn this video transcript into **beautiful, human-friendly notes** that feel
-    carefully written for real users.
-    
-    VIDEO DATA:
-    - URL: {url}
-    - Channel Name: {channel}
-    - Title: {title}
-    - Description: 
-    {description}
+    explain the video in easy detailed way
 
     OUTPUT FORMAT:
     Tone & Care:
-    - Write as if you genuinely care about the reader
     - Make it calm, helpful, and easy to scan
-    - Assume the reader may be tired or busy
 
     Formatting Rules:
     - Use **bold** for important ideas
@@ -99,6 +89,14 @@ def explain_with_gemini(url, title, description, channel):
     - Highlight *why something matters*
     - Reduce clutter and repetition
     - Make it feel like well-crafted product notes.
+    
+    VIDEO DATA:
+    - URL: {url}
+    - Channel Name: {channel}
+    - Title: {title}
+    - Description: 
+    {description}
+    
     """
     
     try:
