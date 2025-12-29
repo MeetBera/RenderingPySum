@@ -49,73 +49,133 @@ def clean_vtt_text(vtt_content):
 # ---------------------------------------------------------
 # CORE LOGIC: Robust Subtitle Fetch
 # ---------------------------------------------------------
+import os
+import glob
+import shutil
+import sys
+import yt_dlp
+import contextlib
+
 def get_transcript_from_subs(url):
-    temp_dir = "/tmp"
-    if os.name == 'nt': 
-        temp_dir = os.path.join(os.getcwd(), "temp_subs")
-    
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
-    
-    for f in glob.glob(os.path.join(temp_dir, "*.vtt")):
-        try: os.remove(f)
-        except: pass
+    # --- 1. SETUP TEMP DIRECTORY (Render Safe) ---
+    # We use a specific subfolder in /tmp to avoid file collisions
+    temp_dir = "/tmp/yt_subs"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)  # Clean start
+    os.makedirs(temp_dir)
 
+    # --- 2. HANDLE COOKIES (Render Secrets) ---
     cookie_file = None
-    possible_paths = ["youtube.com_cookies.txt", "/etc/secrets/youtube.com_cookies.txt"]
-    for path in possible_paths:
-        if os.path.exists(path):
-            cookie_file = path
-            print(f"🍪 Using cookies from: {path}", file=sys.stderr)
-            break
+    if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
+        try:
+            # Copy to temp to ensure permissions work
+            dest = "/tmp/youtube_cookies.txt"
+            shutil.copy("/etc/secrets/youtube.com_cookies.txt", dest)
+            cookie_file = dest
+        except:
+            cookie_file = "/etc/secrets/youtube.com_cookies.txt"
+    elif os.path.exists("youtube.com_cookies.txt"):
+        cookie_file = "youtube.com_cookies.txt"
 
-    # 1. FETCH METADATA
+    print(f"🍪 Cookie file used: {cookie_file}", file=sys.stderr)
+
+    # --- 3. METADATA & LANGUAGE SELECTION ---
+    # We fetch metadata first to check what languages exist
     meta_opts = {
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'cookiefile': cookie_file
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     }
-    
-    target_lang = 'en.*' # Default safest fallback
+
+    target_lang = 'en.*' # Default fallback
+    video_id = "unknown"
+    title = "Unknown"
+    desc = ""
 
     try:
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with yt_dlp.YoutubeDL(meta_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                video_id = info.get('id')
-                title = info.get('title', 'No Title')
-                desc = info.get('description', '')
-                
-                # Get all available subtitle languages
-                manual_subs = list(info.get('subtitles', {}).keys())
-                auto_subs = list(info.get('automatic_captions', {}).keys())
-                all_langs = set(manual_subs + auto_subs)
-                
-                print(f"ℹ️ Available Languages: {all_langs}", file=sys.stderr)
+        with yt_dlp.YoutubeDL(meta_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            video_id = info.get('id')
+            title = info.get('title', 'No Title')
+            desc = info.get('description', '')
 
-                # SMART PRIORITY LIST
-                # 1. English (Any variant)
-                # 2. Hindi (Any variant)
-                # 3. Auto-detected Native (if sensible)
-                
-                if any(l.startswith('en') for l in all_langs):
-                    target_lang = 'en.*'
-                    print("ℹ️ Selecting English subtitles.", file=sys.stderr)
-                elif any(l.startswith('hi') for l in all_langs):
-                    target_lang = 'hi.*'
-                    print("ℹ️ Selecting Hindi subtitles.", file=sys.stderr)
-                elif auto_subs:
-                    target_lang = auto_subs[0]
-                    print(f"ℹ️ Selecting Auto-detected: {target_lang}", file=sys.stderr)
-                else:
-                    print("❌ No subtitles found.", file=sys.stderr)
-                    return None, None, None
+            # Combine manual and auto-generated captions
+            manual_subs = list(info.get('subtitles', {}).keys())
+            auto_subs = list(info.get('automatic_captions', {}).keys())
+            all_langs = set(manual_subs + auto_subs)
+            
+            print(f"ℹ️ Found Languages: {all_langs}", file=sys.stderr)
+
+            # --- SMART PRIORITY LOGIC ---
+            # 1. English
+            if any(l.startswith('en') for l in all_langs):
+                target_lang = 'en.*'
+                print("✅ Selected: English", file=sys.stderr)
+            # 2. Hindi
+            elif any(l.startswith('hi') for l in all_langs):
+                target_lang = 'hi.*'
+                print("✅ Selected: Hindi", file=sys.stderr)
+            # 3. Fallback to whatever is available (e.g., auto-generated)
+            elif len(all_langs) > 0:
+                target_lang = list(all_langs)[0]
+                print(f"✅ Selected Fallback: {target_lang}", file=sys.stderr)
+            else:
+                print("❌ No subtitles found at all.", file=sys.stderr)
+                return None, None, None
 
     except Exception as e:
         print(f"⚠️ Metadata fetch failed: {e}", file=sys.stderr)
         return None, None, None
 
+    # --- 4. DOWNLOAD SUBTITLES ---
+    # Now we download ONLY the selected subtitle file
+    dl_opts = {
+        'skip_download': True,      # Don't download video
+        'writesubtitles': True,     # Download manual subs
+        'writeautomaticsub': True,  # Download auto subs
+        'subtitleslangs': [target_lang], 
+        'subtitlesformat': 'vtt',   # Force VTT format
+        'outtmpl': f"{temp_dir}/%(id)s", # Save to our temp folder
+        'quiet': True,
+        'no_warnings': True,
+        'cookiefile': cookie_file,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(dl_opts) as ydl:
+            ydl.download([url])
+
+        # --- 5. FIND AND READ FILE ---
+        # yt-dlp appends the language code to the filename (e.g., videoID.en.vtt)
+        # We use glob to find whatever file appeared in our temp folder
+        potential_files = glob.glob(os.path.join(temp_dir, "*.vtt"))
+
+        if potential_files:
+            sub_path = potential_files[0]
+            print(f"📂 Reading file: {sub_path}", file=sys.stderr)
+            
+            with open(sub_path, 'r', encoding='utf-8') as f:
+                raw_text = f.read()
+
+            # Clean the text using your existing function
+            clean_text = clean_vtt_text(raw_text)
+
+            # --- 6. CLEANUP ---
+            shutil.rmtree(temp_dir)
+            
+            return clean_text, title, desc
+        else:
+            print("❌ Download finished but no .vtt file found.", file=sys.stderr)
+            return None, None, None
+
+    except Exception as e:
+        print(f"⚠️ Subtitle download failed: {e}", file=sys.stderr)
+        # Cleanup on fail
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        return None, None, None
     # 2. DOWNLOAD SELECTED LANGUAGE
     opts = {
         'skip_download': True,
