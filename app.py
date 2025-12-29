@@ -3,11 +3,11 @@ from flask_cors import CORS
 import os
 import sys
 
-# Import the updated functions from your summary.py
-# ensure summary.py has the function 'explain_url_directly' defined in the previous step
+# Import the updated functions from summary.py
 from summary import (
     configure_gemini,
-    explain_url_directly
+    get_video_metadata,
+    explain_with_gemini
 )
 
 app = Flask(__name__)
@@ -26,7 +26,7 @@ def home():
     """Health Check Route"""
     return jsonify({
         "status": "running", 
-        "message": "Video Summary API Ready (Direct URL Mode)",
+        "message": "Video Summary API Ready (Metadata Mode)",
         "service": "Render"
     })
 
@@ -43,21 +43,26 @@ def summarize_video():
     try:
         print(f"🚀 Processing URL: {url}", file=sys.stderr)
         
-        # 2. Direct Gemini Call (No subtitles/yt-dlp)
-        # We pass the URL directly to the model
-        summary_text = explain_url_directly(url)
+        # 2. Fetch Metadata (Title, Description, Channel)
+        # This uses the fast yt-dlp mode we added to summary.py
+        title, description, channel = get_video_metadata(url)
+
+        if not title:
+            return jsonify({"error": "Could not fetch video metadata"}), 404
+        
+        # 3. Generate Summary using Metadata
+        summary_text = explain_with_gemini(url, title, description, channel)
         
         # Clean up specific unicode characters that might break JSON
         summary_text = summary_text.replace("\u2028", "").replace("\u2029", "")
         
-        # 3. Successful Response
-        # Note: Without yt-dlp, we cannot fetch the specific Video Title or Description
-        # We provide a placeholder title so the frontend doesn't break.
+        # 4. Successful Response
         return jsonify({
             "summary": summary_text,
-            "title": "Video Analysis", 
-            "description": "Generated via direct AI analysis.",
-            "method": "direct_url_prompt"
+            "title": title, 
+            "channel": channel,
+            "description": description[:200] + "..." if description else "", # Truncate for cleaner JSON
+            "method": "metadata_only"
         })
 
     except Exception as e:
