@@ -218,13 +218,10 @@ def explain_with_gemini(transcript, title="", description=""):
     carefully written for real users.
 
     Tone & Care:
-    - Write as if you genuinely care about the reader
     - Make it calm, helpful, and easy to scan
 
     Formatting Rules:
     - Use **bold** for important ideas
-    - Use *italic* for emphasis or clarification
-    - Use short sections with clear spacing
     - Avoid heavy Markdown (no ## headings)
 
     Content Style:
