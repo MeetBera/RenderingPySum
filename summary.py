@@ -202,36 +202,55 @@ def get_transcript_from_subs(url):
 # ---------------------------------------------------------
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
-def explain_with_gemini(transcript, title="", description=""):
-    # FIX: Use 1.5-flash (2.5 doesn't exist publicly)
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
-    safe_transcript = transcript[:100000] 
-    
-    prompt = f"""
-    You are a product-quality note designer.
-    Turn this video transcript into **beautiful, human-friendly notes**.
+GEMINI_MODELS = [
+    "gemini-2.5-flash-lite",  # cheapest, fastest
+    "gemini-2.5-flash",       # higher quality
+    "gemini-3-flash",
+    "gemini-robotics-er-1.5-preview"
+]
 
-    METADATA:
+def explain_with_gemini(transcript, title="", description=""):
+    safe_transcript = transcript[:100000]
+
+    prompt = f"""
+    Your task:
+    Turn this video transcript into **beautiful, human-friendly notes** that feel
+    carefully written for real users.
+
+    Tone & Care:
+    - Write as if you genuinely care about the reader
+    - Make it calm, helpful, and easy to scan
+
+    Formatting Rules:
+    - Use **bold** for important ideas
+    - Use *italic* for emphasis or clarification
+    - Use short sections with clear spacing
+    - Avoid heavy Markdown (no ## headings)
+
+    Content Style:
+    - Explain ideas simply, not academically
+    - Highlight *why something matters*
+    
     Title: {title}
     Description: {description[:500]}
 
-    TRANSCRIPT:
+    Transcript:
     {safe_transcript}
-
-    OUTPUT FORMAT:
-    ## Summary
-    (Concise overview)
-
-    ## Key Points
-    - (Bulleted list)
     """
-    
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        raise Exception(f"Gemini API Error: {str(e)}")
 
+    last_error = None
+
+    for model_name in GEMINI_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            last_error = e
+            print(f"⚠️ Model {model_name} failed, trying next...", file=sys.stderr)
+
+    raise Exception(f"All Gemini models failed: {last_error}")
+    
 # ---------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------
