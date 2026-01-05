@@ -119,22 +119,27 @@ def get_transcript_from_subs(url):
             target_lang = orig_langs[0]
             use_auto = True
         
-        # 2. Prefer Hindi
+        # 2️⃣ Prefer Hindi auto captions
         elif "hi" in auto_subs:
             target_lang = "hi"
             use_auto = True
         
-        # 3. Prefer any non-English language
-        elif auto_subs:
-            non_en = [l for l in auto_subs if l != "en"]
-            if non_en:
-                target_lang = non_en[0]
-                use_auto = True
-            else:
-                target_lang = "en"
-                use_auto = True
+        # 3️⃣ Prefer English auto captions
+        elif "en" in auto_subs:
+            target_lang = "en"
+            use_auto = True
         
-        # 4. Manual subtitles fallback
+        # 4️⃣ English manual captions fallback
+        elif "en" in manual_subs:
+            target_lang = "en"
+            use_auto = False
+        
+        # 5️⃣ Any remaining auto captions
+        elif auto_subs:
+            target_lang = list(auto_subs.keys())[0]
+            use_auto = True
+        
+        # 6️⃣ Any remaining manual captions
         elif manual_subs:
             target_lang = list(manual_subs.keys())[0]
             use_auto = False
@@ -203,8 +208,8 @@ def get_transcript_from_subs(url):
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
 GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",  # cheapest, fastest
     "gemini-2.5-flash",       # higher quality
+    "gemini-2.5-flash-lite",  # cheapest, fastest
     "gemini-3-flash",
     "gemini-robotics-er-1.5-preview"
 ]
