@@ -32,6 +32,11 @@ def home():
         "service": "Render"
     })
 
+@app.route("/health", methods=["GET"])
+def health():
+    return "OK", 200
+
+
 @app.route("/summarize", methods=["POST"])
 def summarize_video():
     data = request.get_json()
