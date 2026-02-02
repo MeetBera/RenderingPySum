@@ -208,10 +208,8 @@ def get_transcript_from_subs(url):
 # GEMINI SUMMARIZATION
 # ---------------------------------------------------------
 GEMINI_MODELS = [
-    "gemini-2.5-flash",       # higher quality
     "gemini-2.5-flash-lite",  # cheapest, fastest
-    "gemini-3-flash",
-    "gemini-robotics-er-1.5-preview"
+    "gemini-2.5-flash",       # higher quality
 ]
 
 def explain_with_gemini(transcript, title="", description=""):
