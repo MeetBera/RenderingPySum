@@ -216,9 +216,8 @@ def explain_with_gemini(transcript, title="", description=""):
     safe_transcript = transcript[:100000]
 
     prompt = f"""
-    Your task:
-    Turn this video transcript into **beautiful, human-friendly notes** that feel
-    carefully written for real users.
+    Your task: Generate useful, explained and understandable notes from this transcript.
+    language: English
 
     Tone & Care:
     - Make it calm, helpful, and easy to scan
@@ -226,10 +225,6 @@ def explain_with_gemini(transcript, title="", description=""):
     Formatting Rules:
     - Use **bold** for important ideas
     - Avoid heavy Markdown (no ## headings)
-
-    Content Style:
-    - Explain ideas simply, not academically
-    - Highlight *why something matters*
     
     Title: {title}
     Description: {description[:500]}
