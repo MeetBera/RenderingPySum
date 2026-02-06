@@ -60,30 +60,40 @@ def get_transcript_from_subs(url):
     os.makedirs(temp_dir)
 
     # --- 2. HANDLE COOKIES ---
+   # --- 2. HANDLE COOKIES ---
     cookie_file = None
     if os.path.exists("/etc/secrets/youtube.com_cookies.txt"):
         try:
             dest = "/tmp/youtube_cookies.txt"
             shutil.copy("/etc/secrets/youtube.com_cookies.txt", dest)
             cookie_file = dest
-        except:
+            # DEBUG: Print size to confirm it's not empty
+            file_size = os.path.getsize(cookie_file)
+            print(f"🍪 Cookie file loaded from secrets ({file_size} bytes)", file=sys.stderr)
+        except Exception as e:
+            print(f"⚠️ Cookie copy failed: {e}", file=sys.stderr)
             cookie_file = "/etc/secrets/youtube.com_cookies.txt"
     elif os.path.exists("youtube.com_cookies.txt"):
         cookie_file = "youtube.com_cookies.txt"
-
-    print(f"🍪 Cookie file used: {cookie_file}", file=sys.stderr)
+        print(f"🍪 Cookie file loaded from local path", file=sys.stderr)
+    else:
+        print("⚠️ No cookie file found!", file=sys.stderr)
 
     # --- 3. FETCH METADATA & SELECT LANGUAGE ---
+   # --- 3. FETCH METADATA & SELECT LANGUAGE ---
     meta_opts = {
-    "skip_download": True,
-    "quiet": True,
-    "no_warnings": True,
-    "cookiefile": cookie_file,
-    "format": "bestaudio/best",
-    "ignore_no_formats_error": True,
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "web", "ios"]
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "cookiefile": cookie_file,
+        "format": "bestaudio/best",
+        "ignore_no_formats_error": True,
+        "allow_unplayable_formats": True,  # VITAL: Fetches info even if video is restricted
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios", "web"], # Rotate clients
+                "player_skip": ["webpage", "configs"],      # Skip blocks that trigger bot detection
             }
         }
     }
@@ -159,6 +169,7 @@ def get_transcript_from_subs(url):
         return None, None, None
 
         # --- 4. DOWNLOAD SUBTITLES (ONE REQUEST ONLY) ---
+    # --- 4. DOWNLOAD SUBTITLES (ONE REQUEST ONLY) ---
     dl_opts = {
         "skip_download": True,
         "subtitleslangs": [target_lang],
@@ -171,9 +182,12 @@ def get_transcript_from_subs(url):
         "writeautomaticsub": use_auto,
         "format": "bestaudio/best",
         "ignore_no_formats_error": True,
+        "allow_unplayable_formats": True, # Match meta_opts
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web", "ios"]
+                "player_client": ["android", "ios", "web"],
+                "player_skip": ["webpage", "configs"],
             }
         }
     }
@@ -274,8 +288,12 @@ def main():
             print(f"❌ Gemini Error: {e}", file=sys.stderr)
             sys.exit(1)
     else:
-        print("❌ FATAL: Could not retrieve subtitles.", file=sys.stderr)
-        sys.exit(1)
+        print(json.dumps({
+            "error": "Unable to retrieve subtitles. The video might be restricted or lacking captions.",
+            "title": title if 'title' in locals() else "Unknown",
+            "summary": None
+        }))
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
